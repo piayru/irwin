@@ -17,9 +17,9 @@ El [README en inglés](README.md) es la referencia para las traducciones. La int
 | Ubuntu 22.04 x64                | Es un objetivo de compilación de Linux, pero no se ha validado en un escritorio nativo.                                                                                                                                                       | Sin soporte oficial todavía               |
 | macOS 14+ Intel / Apple Silicon | El mantenedor informa de una instalación desde DMG y un inicio correctos en un M3 MacBook Air. Quedan por confirmar la versión exacta de macOS, la identidad del DMG, los demás flujos de trabajo y la validación en Intel.                   | Validación nativa parcial                 |
 
-Los instaladores públicos se podrán descargar desde GitHub Releases cuando se publique una versión. No es necesario instalar Irwin mediante una tienda de aplicaciones. Los instaladores preliminares no tendrán firma de editor de pago ni notarización de Apple. La [guía de instalación](docs/INSTALLATION.md) explica cómo verificar las sumas de comprobación y los avisos previstos en el primer inicio. Las rutas generadas por los comandos de empaquetado local son resultados de compilación, no enlaces de descarga.
+Descarga los instaladores y las sumas SHA-256 desde [GitHub Releases](https://github.com/piayru/irwin/releases). No es necesario instalar Irwin mediante una tienda de aplicaciones. Los instaladores preliminares no tienen firma de editor de pago ni notarización de Apple. La [guía de instalación](docs/INSTALLATION.md) explica cómo verificar las sumas y los avisos previstos en el primer inicio.
 
-Para la versión 0.1.0, los nombres configurados son `Irwin-0.1.0-win-x64.exe`, `Irwin-0.1.0-linux-x64.deb`, `Irwin-0.1.0-mac-x64.dmg` e `Irwin-0.1.0-mac-arm64.dmg`. Estos nombres describen resultados de compilación; todavía no son descargas publicadas.
+Los nombres de los instaladores siguen el formato `Irwin-<version>-win-x64.exe`, `Irwin-<version>-linux-x64.deb`, `Irwin-<version>-mac-x64.dmg` e `Irwin-<version>-mac-arm64.dmg`. Elige la versión y la arquitectura indicadas en la página de la versión.
 
 ## Funciones
 
@@ -33,7 +33,7 @@ Consulta los flujos de trabajo y las limitaciones en la [guía de usuario](docs/
 
 ## Instalar Irwin
 
-La [guía de instalación](docs/INSTALLATION.md) incluye instrucciones para Windows, Ubuntu y macOS. Todavía no hay instaladores públicos. El estado de las plataformas y las pruebas nativas pendientes están en la [matriz de compatibilidad](docs/COMPATIBILITY.md).
+La [guía de instalación](docs/INSTALLATION.md) incluye instrucciones para Windows, Ubuntu y macOS. El estado de las plataformas y las pruebas nativas pendientes están en la [matriz de compatibilidad](docs/COMPATIBILITY.md).
 
 ## Compilar desde el código fuente
 

@@ -17,9 +17,9 @@
 | Ubuntu 22.04 x64                | Linux ビルドの対象ですが、実際のデスクトップでは未検証です。                                                                                                                 | 正式サポート未提供       |
 | macOS 14+ Intel / Apple Silicon | メンテナーから、M3 MacBook Air で DMG をインストールして起動できたとの報告があります。正確な macOS バージョン、DMG の識別情報、その他の操作、Intel での検証は未確認です。    | 一部の実機検証のみ完了   |
 
-リリース公開後、GitHub Releases からインストーラーをダウンロードできるようになります。アプリストア経由のインストールは不要です。プレビュー版には有料の発行元署名や Apple の公証はありません。[インストールガイド](docs/INSTALLATION.md)でチェックサムの検証と初回起動時の警告について説明しています。ローカルのパッケージ作成コマンドが出力するパスはビルド成果物であり、ダウンロードリンクではありません。
+インストーラーと SHA-256 チェックサムは [GitHub Releases](https://github.com/piayru/irwin/releases) からダウンロードしてください。アプリストア経由のインストールは不要です。プレビュー版には有料の発行元署名や Apple の公証はありません。[インストールガイド](docs/INSTALLATION.md)でチェックサムの検証と初回起動時の警告について説明しています。
 
-バージョン 0.1.0 のインストーラー名は `Irwin-0.1.0-win-x64.exe`、`Irwin-0.1.0-linux-x64.deb`、`Irwin-0.1.0-mac-x64.dmg`、`Irwin-0.1.0-mac-arm64.dmg` に設定されています。これらはビルド成果物の名前であり、まだ公開されていません。
+インストーラー名の形式は `Irwin-<version>-win-x64.exe`、`Irwin-<version>-linux-x64.deb`、`Irwin-<version>-mac-x64.dmg`、`Irwin-<version>-mac-arm64.dmg` です。リリースページでバージョンとアーキテクチャを選択してください。
 
 ## 機能
 
@@ -33,7 +33,7 @@
 
 ## Irwin のインストール
 
-Windows、Ubuntu、macOS の手順は[インストールガイド](docs/INSTALLATION.md)を参照してください。公開インストーラーはまだありません。プラットフォームの状況と未完了の実機検証は[互換性一覧](docs/COMPATIBILITY.md)に記載しています。
+Windows、Ubuntu、macOS の手順は[インストールガイド](docs/INSTALLATION.md)を参照してください。プラットフォームの状況と未完了の実機検証は[互換性一覧](docs/COMPATIBILITY.md)に記載しています。
 
 ## ソースからビルド
 

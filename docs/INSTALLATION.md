@@ -1,6 +1,6 @@
 # Install Irwin
 
-Irwin is distributed through GitHub Releases using direct installer downloads, not application stores. No public downloads have been published yet. The names below describe configured build outputs; the Windows candidate and macOS/Ubuntu installers still need the native installation checks listed in the [compatibility matrix](COMPATIBILITY.md).
+Download Irwin installers and SHA-256 checksums from [GitHub Releases](https://github.com/piayru/irwin/releases). The Preview is distributed through direct downloads. Check the release notes and [compatibility matrix](COMPATIBILITY.md) for the automated verification results and pending native installation checks.
 
 The Preview release policy is to ship without a paid publisher certificate or Apple notarization. Each release must state this clearly, include SHA-256 checksums, and identify the tested operating systems and architectures. Signing can be added later without moving distribution to a store. Download both the installer and its checksum from the project's own GitHub Release; a matching checksum confirms the file matches that release, but does not replace publisher verification.
 
