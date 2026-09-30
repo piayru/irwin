@@ -23,23 +23,36 @@ const git = spawnSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
   windowsHide: true,
 });
-const commit = argument("--commit", process.env.GITHUB_SHA || git.stdout.trim());
+const commit = argument(
+  "--commit",
+  process.env.GITHUB_SHA || git.stdout.trim(),
+);
 if (!/^[a-f0-9]{40}$/i.test(commit))
   throw new Error("Release manifest requires a 40-character git commit SHA");
 
 const artifacts = [];
 const artifactPattern =
-  /^Irwin-(.+)-(win|linux|mac)-(x64|arm64)\.(exe|deb|dmg)$/;
+  /^Irwin-(.+)-(win|linux|mac)-(x64|arm64)\.(exe|deb|dmg|zip)$/;
 for (const file of await readdir(directory)) {
   if (!file.startsWith("Irwin-")) continue;
-  if (/^Irwin-.+-(?:win|linux|mac)-(?:x64|arm64)\.(?:exe|deb|dmg)\.blockmap$/.test(file))
+  if (
+    /^Irwin-.+-(?:win|linux|mac)-(?:x64|arm64)\.(?:exe|deb|dmg|zip)\.blockmap$/.test(
+      file,
+    )
+  )
     continue;
   const match = artifactPattern.exec(file);
   if (!match) throw new Error(`Unexpected release artifact name: ${file}`);
   const [, version, platform, arch, extension] = match;
-  const expectedExtension = { win: "exe", linux: "deb", mac: "dmg" }[platform];
-  if (version !== pkg.version || extension !== expectedExtension)
-    throw new Error(`Release artifact does not match package version or platform: ${file}`);
+  const expectedExtensions = {
+    win: ["exe"],
+    linux: ["deb"],
+    mac: ["dmg", "zip"],
+  }[platform];
+  if (version !== pkg.version || !expectedExtensions.includes(extension))
+    throw new Error(
+      `Release artifact does not match package version or platform: ${file}`,
+    );
   const path = join(directory, file);
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk);

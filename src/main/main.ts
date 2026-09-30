@@ -12,7 +12,7 @@ import {
 } from "electron";
 import electronUpdater from "electron-updater";
 import { join, resolve } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import {
@@ -25,15 +25,13 @@ import { Storage } from "./storage";
 import { resolveConnection, type Route } from "./connection";
 import { WorkerClient } from "./rpc";
 import { operationAccess, redact } from "../core/policy";
+import { UpdateRestartGuard } from "./update-restart-guard";
 import { shouldCheckShellDrafts } from "./window-close-lifecycle";
 import { developmentIconPath } from "./app-icon";
 import { nativeThemeSource } from "./theme";
 import { capInteractiveQueryTimeout } from "../shared/query-timeout";
 import { jobNotificationKind } from "../shared/job-notifications";
-import {
-  shouldAutoCheckForUpdates,
-  UpdateService,
-} from "./update-service";
+import { shouldAutoCheckForUpdates, UpdateService } from "./update-service";
 import {
   assertCsvSidecarTargetSafe,
   writeCsvFormulaSidecar,
@@ -64,6 +62,51 @@ let database: WorkerClient;
 let updateService: UpdateService;
 let allowWindowClose = false;
 let shuttingDown = false;
+let activeRequests = 0;
+let installingUpdate = false;
+const updateRestartGuard = new UpdateRestartGuard();
+function busyForUpdate() {
+  return (
+    activeRequests > 0 ||
+    receiptContexts.size > 0 ||
+    aiRequests.size > 0 ||
+    opening.size > 0
+  );
+}
+async function prepareUpdateRestart() {
+  if (shuttingDown || busyForUpdate() || !window || window.isDestroyed())
+    return false;
+  const id = randomUUID();
+  const ready = await updateRestartGuard.request(id, () =>
+    event({ type: "updateRestart", data: { id } }),
+  );
+  if (!ready || shuttingDown || busyForUpdate() || window.isDestroyed())
+    return false;
+  // No new operations may start between this final check and updater quit.
+  installingUpdate = true;
+  return true;
+}
+function installedLinuxPackageType() {
+  if (process.platform !== "linux" || !app.isPackaged) return undefined;
+  try {
+    return readFileSync(
+      join(process.resourcesPath, "package-type"),
+      "utf8",
+    ).trim();
+  } catch {
+    return undefined;
+  }
+}
+function signedMacUpdatesEnabled() {
+  try {
+    return (
+      JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8"))
+        .irwinMacAutoUpdates === true
+    );
+  } catch {
+    return false;
+  }
+}
 const routes = new Map<string, Route>();
 const opening = new Map<string, Promise<any>>();
 const shells = new Map<
@@ -602,6 +645,9 @@ async function request(command: Command, raw: any): Promise<any> {
       return updateService.check();
     case "updates.install":
       return updateService.install();
+    case "updates.restartReady":
+      updateRestartGuard.acknowledge(p.id, p.ready);
+      return {};
     case "updates.openRelease":
       await shell.openExternal(UpdateService.releasePage);
       return {};
@@ -793,7 +839,13 @@ app.whenReady().then(() => {
     platform: process.platform,
     packaged: app.isPackaged,
     updater: autoUpdater,
-    onStatus: (status) => event({ type: "update", data: status }),
+    macAutoUpdates: signedMacUpdatesEnabled(),
+    linuxPackageType: installedLinuxPackageType(),
+    beforeInstall: prepareUpdateRestart,
+    onStatus: (status) => {
+      if (status.state === "error") installingUpdate = false;
+      event({ type: "update", data: status });
+    },
   });
   if (process.platform === "win32")
     app.setAppUserModelId(
@@ -875,10 +927,16 @@ app.whenReady().then(() => {
       !Object.hasOwn(commands, command)
     )
       return { ok: false, error: "Invalid request" };
+    if (installingUpdate)
+      return { ok: false, error: "Irwin is restarting to install the update." };
+    const tracksWork = !command.startsWith("updates.");
+    if (tracksWork) activeRequests++;
     try {
       return { ok: true, result: await request(command as Command, payload) };
     } catch (error) {
       return { ok: false, error: redact((error as Error).message) };
+    } finally {
+      if (tracksWork) activeRequests--;
     }
   });
   if (devUrl) void window.loadURL(devUrl);

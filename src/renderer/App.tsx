@@ -51,6 +51,7 @@ import type { UpdateStatus } from "../main/update-service";
 import { UiContext, Modal, Field, api, message } from "./ui";
 import { PreferencesDialog } from "./PreferencesDialog";
 import { UpdateDialog } from "./UpdateDialog";
+import { setUpdateRestartLock } from "./update-restart";
 import ConnectionDialog from "./ConnectionDialog";
 import type { ShellDraftChange, WorkspaceTab } from "./CollectionTab";
 import TransferDialog from "./TransferDialog";
@@ -187,6 +188,23 @@ export default function App() {
     mode: "schema" | "compare";
     target: AnalysisTarget;
   }>();
+  // Workspace tabs are not restored on launch and may contain unsaved query,
+  // document, aggregation or Shell work. Require them to be closed deliberately.
+  const updateRestartReady = useRef(false);
+  updateRestartReady.current =
+    workspaceReady &&
+    showUpdates &&
+    tabs.length === 0 &&
+    !preferences &&
+    !connectionDialog &&
+    !transfer &&
+    !admin &&
+    !usersRolesProfile &&
+    !analysis &&
+    !removingProfile &&
+    !closingShellTab &&
+    jobs.every((job) => job.status !== "running") &&
+    connecting.length === 0;
   const onTabStateChange = useCallback((id: string, state: TabState) => {
     setTabs((old) =>
       old.map((tab) =>
@@ -295,7 +313,24 @@ export default function App() {
           );
       }
       if (event.type === "openJobs") setShowJobs(true);
-      if (event.type === "update") setUpdateStatus(event.data);
+      if (event.type === "update") {
+        setUpdateStatus(event.data);
+        // Native macOS staging can take time after quitAndInstall. Keep all
+        // editors inert after a positive handshake, until failure/deferment.
+        if (event.data.state !== "installing") setUpdateRestartLock(false);
+      }
+      if (event.type === "updateRestart") {
+        const dialogs = [...document.querySelectorAll("dialog[open]")];
+        const ready =
+          updateRestartReady.current &&
+          dialogs.every((dialog) => dialog.classList.contains("update-modal"));
+        if (ready) setUpdateRestartLock(true);
+        void api
+          .request("updates.restartReady", { id: event.data.id, ready })
+          .catch(() => {
+            setUpdateRestartLock(false);
+          });
+      }
     });
   }, []);
   useEffect(() => {
@@ -323,6 +358,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
+      if (document.body.inert) return;
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "p")
         return;
       event.preventDefault();

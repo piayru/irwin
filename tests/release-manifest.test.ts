@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -13,7 +19,10 @@ function fixture() {
   roots.push(root);
   mkdirSync(join(root, "vendor"), { recursive: true });
   mkdirSync(join(root, "release"));
-  writeFileSync(join(root, "package.json"), JSON.stringify({ version: "0.1.0" }));
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ version: "0.1.0" }),
+  );
   writeFileSync(
     join(root, "vendor/tools-manifest.json"),
     JSON.stringify({ version: "100.18.0" }),
@@ -22,7 +31,8 @@ function fixture() {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
 });
 
 test("release manifest hashes the exact installer bytes and records provenance", () => {
@@ -48,7 +58,8 @@ test("release manifest hashes the exact installer bytes and records provenance",
     artifacts: [
       {
         file: "Irwin-0.1.0-win-x64.exe",
-        sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        sha256:
+          "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         bytes: 3,
         platform: "win",
         arch: "x64",
@@ -68,4 +79,30 @@ test("rejects an unknown Irwin release artifact instead of skipping it", () => {
   );
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("Unexpected release artifact name");
+});
+
+test("records macOS ZIP update artifacts alongside DMG installers", () => {
+  const root = fixture();
+  for (const arch of ["x64", "arm64"]) {
+    writeFileSync(join(root, `release/Irwin-0.1.0-mac-${arch}.dmg`), "dmg");
+    writeFileSync(join(root, `release/Irwin-0.1.0-mac-${arch}.zip`), "zip");
+    writeFileSync(
+      join(root, `release/Irwin-0.1.0-mac-${arch}.zip.blockmap`),
+      "blockmap",
+    );
+  }
+  const result = spawnSync(
+    process.execPath,
+    [script, "--root", root, "--commit", commit],
+    { encoding: "utf8" },
+  );
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+  const manifest = JSON.parse(
+    readFileSync(join(root, "release/release-manifest.json"), "utf8"),
+  );
+  expect(manifest.artifacts).toHaveLength(4);
+  expect(
+    manifest.artifacts.filter((a: { file: string }) => a.file.endsWith(".zip")),
+  ).toHaveLength(2);
 });
