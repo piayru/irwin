@@ -5,7 +5,7 @@ export const operationReceiptSchema = z.strictObject({
   id: z.string().min(1).max(128),
   occurredAt: z.string().datetime(),
   connectionName: z.string().max(255),
-  environment: z.enum(["development", "staging", "production"]),
+  environment: z.enum(["local", "development", "staging", "production"]),
   namespace: z.string().max(512),
   action: z.string().min(1).max(64),
   mode: z.string().max(64),

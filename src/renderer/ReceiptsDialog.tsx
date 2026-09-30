@@ -183,6 +183,7 @@ export default function ReceiptsDialog({
             }
           >
             <option value="">{t("所有環境", "All environments")}</option>
+            <option value="local">Local</option>
             <option value="development">Development</option>
             <option value="staging">Staging</option>
             <option value="production">Production</option>
