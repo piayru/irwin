@@ -20,6 +20,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod
       - run: node node_modules/electron/install.js
       - name: Stage native Database Tools
         run: pnpm tools:fetch
@@ -55,5 +56,7 @@ jobs:
             release/Irwin-*.exe
             release/Irwin-*.deb
             release/Irwin-*.dmg
+            release/Irwin-*.blockmap
+            release/latest*.yml
             release/release-manifest.json
             .runtime/desktop-smoke.json

@@ -4,11 +4,17 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.1 — 2026-09-30
+
 ### Security
 
 - Updated transitive `brace-expansion` dependencies to 1.1.21, 2.1.7, and 5.0.12 to address resource-exhaustion advisories.
 - Updated transitive `ip-address` to 10.7.2 to address address-family comparison and IPv6 parse-diagnostic advisories.
 - Updated the packaging toolchain's transitive `fast-uri` dependency to 3.1.8 to address host-normalization inconsistency.
+
+### Documentation
+
+- Clarified the required Node.js and pnpm versions and macOS certificate-helper behavior in the installation guide.
 
 ## 0.1.0 — 2026-09-30
 
