@@ -120,6 +120,7 @@
       "maintainer": "Wilbert Yang <zxpiayru@gmail.com>"
     },
     "deb": {
+      "artifactName": "Irwin-${version}-linux-x64.${ext}",
       "packageName": "irwin"
     },
     "mac": {
