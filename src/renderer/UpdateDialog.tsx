@@ -22,9 +22,7 @@ export function UpdateDialog({
   const { t } = useUi();
   const state = status?.state ?? "idle";
   const busy =
-    state === "checking" ||
-    state === "downloading" ||
-    (state === "available" && status?.delivery === "automatic");
+    state === "checking" || state === "downloading" || state === "installing";
   const message = (() => {
     switch (state) {
       case "checking":
@@ -38,7 +36,14 @@ export function UpdateDialog({
         );
       case "downloading":
         return t("正在下載更新…", "Downloading the update…");
+      case "installing":
+        return t("正在安裝更新並重新啟動…", "Installing and restarting…");
       case "downloaded":
+        if (status?.restartDeferred)
+          return t(
+            "更新已下載。請先儲存並關閉工作分頁、其他對話框，等待背景任務完成，再按重新啟動並安裝。",
+            "Update downloaded. Save and close workspace tabs and other dialogs, then wait for background work to finish before restarting.",
+          );
         return t(
           "更新已下載，重新啟動即可安裝。",
           "The update is ready to install.",
@@ -49,8 +54,9 @@ export function UpdateDialog({
           "No public GitHub release is available yet.",
         );
       case "error":
-        return (
-          status?.message ?? t("檢查更新失敗。", "Could not check for updates.")
+        return t(
+          "無法完成更新。請確認網路連線後重試；若持續失敗，可從 GitHub Releases 手動下載。",
+          "The update could not be completed. Check your connection and retry, or download it from GitHub Releases.",
         );
       default:
         return t(
@@ -59,9 +65,13 @@ export function UpdateDialog({
         );
     }
   })();
-  const canInstall = state === "downloaded" && status?.delivery === "automatic";
+  const canInstall =
+    status?.delivery === "automatic" &&
+    Boolean(status.availableVersion) &&
+    (state === "available" || state === "error" || state === "downloaded");
   const canOpenRelease =
-    state === "available" || state === "error" || state === "downloaded";
+    state === "error" ||
+    (status?.delivery === "manual" && state === "available");
   const releaseNotes = status?.releaseNotes?.trim();
 
   return (
@@ -76,13 +86,17 @@ export function UpdateDialog({
           </span>
           <button onClick={onClose}>{t("關閉", "Close")}</button>
           {canOpenRelease && (
-            <button className="primary" onClick={onOpenRelease}>
+            <button onClick={onOpenRelease}>
               {t("開啟 GitHub Releases", "Open GitHub Releases")}
             </button>
           )}
           {canInstall ? (
             <button className="primary" onClick={onInstall}>
-              {t("重新啟動並安裝", "Restart and install")}
+              {state === "downloaded"
+                ? t("重新啟動並安裝", "Restart and install")
+                : state === "error"
+                  ? t("重試更新並重新啟動", "Retry update and restart")
+                  : t("更新並重新啟動", "Update and restart")}
             </button>
           ) : (
             <button disabled={busy} onClick={onCheck}>
@@ -113,8 +127,8 @@ export function UpdateDialog({
         {status?.delivery === "automatic" && state === "available" && (
           <p className="muted">
             {t(
-              "更新會在背景下載，完成後你可以選擇何時重新啟動安裝。",
-              "The update downloads in the background. You choose when to restart and install it.",
+              "按「更新並重新啟動」會自動下載、安裝並重新啟動。請先儲存並關閉工作分頁；若仍有工作進行中，更新會暫緩重新啟動。",
+              "Update and restart downloads and installs the update, then restarts Irwin. Save and close workspace tabs first; restart is deferred while work is open or running.",
             )}
           </p>
         )}
@@ -122,8 +136,8 @@ export function UpdateDialog({
           <p className="muted">
             {platform === "darwin"
               ? t(
-                  "目前 macOS 版本未簽署，無法進行應用程式內自動安裝。請從 GitHub Releases 下載 DMG，並將新版 Irwin 拖移至 Applications 覆蓋安裝。",
-                  "This macOS build is unsigned, so in-app installation is unavailable. Download the DMG from GitHub Releases and copy Irwin into Applications to replace the current version.",
+                  "此 macOS 版本尚未啟用經驗證的更新簽章，無法進行應用程式內自動安裝。請從 GitHub Releases 下載啟用自動更新的 DMG，並將 Irwin 拖移至 Applications 覆蓋安裝。",
+                  "This macOS build is not enabled for verified in-app updates. Install an updater-enabled DMG from GitHub Releases into Applications to bootstrap future updates.",
                 )
               : t(
                   "請從 GitHub Releases 下載新版安裝檔並手動安裝。",
@@ -131,7 +145,7 @@ export function UpdateDialog({
                 )}
           </p>
         )}
-        {platform === "linux" && canInstall && (
+        {platform === "linux" && status?.delivery === "automatic" && (
           <p className="muted">
             {t(
               "安裝 .deb 更新時，系統可能會要求你輸入密碼授權。",

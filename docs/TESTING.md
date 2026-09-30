@@ -33,6 +33,26 @@ The Windows packaging workflow runs the desktop scenario against its unpacked ca
 
 These scenarios do not validate every cloud service, AI provider, operating system, or installation path. Complete [native release acceptance](RELEASE_CHECKLIST.md) using the exact installer to be distributed.
 
+## Update workflow regression
+
+`pnpm test` covers update discovery, single-click download/install, duplicate
+clicks, cached/deferred installation, failed feeds/downloads, restart handshakes,
+renderer input locking, platform eligibility, and release metadata integrity.
+
+`node tests/e2e/updates.mjs` exercises the actual update dialog in a headless
+Chromium component harness. Install Playwright's Chromium or set `CHROMIUM_PATH`
+to an existing Chromium executable. It checks the in-app primary action,
+progress, deferred restart, keyboard/input lock and retry; screenshots remain in
+`.runtime/updates-ui/`. It never invokes a real installer and is not a native
+Windows/Linux/macOS update acceptance test.
+
+A ready update restarts automatically only when the update dialog is still open,
+workspace tabs and other editors/dialogs are closed, and background requests/jobs
+are idle. Otherwise it remains downloaded until the user saves/closes work and
+explicitly chooses restart. Closing the update dialog during download defers the
+restart. Exercise both paths in native acceptance with two different versions.
+See [the updater release contract](AUTO_UPDATES.md) for signing and bootstrap.
+
 ## Optional transfer benchmark
 
 `tests/performance/transfers.mjs` measures large transfers and UI responsiveness, then verifies document counts and a complete BSON digest after import. It uses its own MongoDB instance and application data directory. It is outside normal CI because its default one-million-document dataset produces a file larger than 5 GB and can take substantial time and disk space.

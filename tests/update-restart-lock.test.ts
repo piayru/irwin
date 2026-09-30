@@ -1,0 +1,27 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { setUpdateRestartLock } from "../src/renderer/update-restart";
+afterEach(() => vi.unstubAllGlobals());
+it("makes the renderer inert and blocks shortcuts until a failure or deferment unlocks it", () => {
+  const target = new EventTarget();
+  const body = { inert: false };
+  const dialog = { inert: false };
+  vi.stubGlobal("document", { body, querySelectorAll: () => [dialog] });
+  vi.stubGlobal("window", target);
+  setUpdateRestartLock(true);
+  const shortcut = vi.fn();
+  target.addEventListener("keydown", shortcut);
+  const key = new Event("keydown", { cancelable: true });
+  target.dispatchEvent(key);
+  expect(body.inert).toBe(true);
+  expect(dialog.inert).toBe(true);
+  const click = new Event("click", { cancelable: true });
+  target.dispatchEvent(click);
+  expect(click.defaultPrevented).toBe(true);
+  expect(key.defaultPrevented).toBe(true);
+  expect(shortcut).not.toHaveBeenCalled();
+  setUpdateRestartLock(false);
+  target.dispatchEvent(new Event("keydown"));
+  expect(body.inert).toBe(false);
+  expect(dialog.inert).toBe(false);
+  expect(shortcut).toHaveBeenCalledOnce();
+});

@@ -22,7 +22,14 @@ class FakeUpdater extends EventEmitter {
   autoDownload = false;
   autoInstallOnAppQuit = true;
   allowPrerelease = true;
-  checkForUpdates = vi.fn(async () => ({ updateInfo: { version: "0.2.0" } }));
+  checkForUpdates = vi.fn(async () => {
+    this.emit("update-available", { version: "0.2.0" });
+    return { updateInfo: { version: "0.2.0" } };
+  });
+  downloadUpdate = vi.fn(async () => {
+    this.emit("download-progress", { percent: 37.4 });
+    this.emit("update-downloaded", { version: "0.2.0", releaseNotes: "Notes" });
+  });
   quitAndInstall = vi.fn();
 }
 
@@ -31,6 +38,9 @@ function createService(
     currentVersion?: string;
     platform?: NodeJS.Platform;
     packaged?: boolean;
+    macAutoUpdates?: boolean;
+    linuxPackageType?: string;
+    beforeInstall?: () => Promise<boolean>;
     fetcher?: typeof fetch;
     updater?: FakeUpdater;
     onStatus?: (status: UpdateStatus) => void;
@@ -43,6 +53,9 @@ function createService(
     fetcher:
       options.fetcher ?? ((async () => release("v0.1.0")) as typeof fetch),
     updater: options.updater,
+    macAutoUpdates: options.macAutoUpdates,
+    linuxPackageType: options.linuxPackageType ?? "deb",
+    beforeInstall: options.beforeInstall,
     onStatus: options.onStatus ?? (() => {}),
   });
 }
@@ -84,7 +97,7 @@ describe("version update checks", () => {
     });
   });
 
-  it("starts automatic downloads only for packaged Windows and Linux releases", async () => {
+  it("discovers packaged Windows updates without downloading or quitting", async () => {
     const updater = new FakeUpdater();
     const service = createService({
       platform: "win32",
@@ -95,37 +108,135 @@ describe("version update checks", () => {
     await service.check();
 
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
-    expect(updater.autoDownload).toBe(true);
+    expect(updater.autoDownload).toBe(false);
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
     expect(updater.autoInstallOnAppQuit).toBe(false);
     expect(updater.allowPrerelease).toBe(false);
   });
 
-  it("publishes download progress and requires an explicit install after download", async () => {
+  it("downloads and silently installs with one explicit action", async () => {
     const updater = new FakeUpdater();
+    const statuses: UpdateStatus[] = [];
+    const beforeInstall = vi.fn(async () => true);
     const service = createService({
       platform: "linux",
+      updater,
+      beforeInstall,
+      fetcher: async () => release("0.2.0"),
+      onStatus: (status) => statuses.push(status),
+    });
+    await service.check();
+    await service.install();
+    expect(statuses).toContainEqual(
+      expect.objectContaining({ state: "downloading", progress: 37 }),
+    );
+    expect(beforeInstall).toHaveBeenCalledOnce();
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(true, true);
+    expect(service.status.state).toBe("installing");
+    await service.install();
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a verified download when work prevents restart, then installs without redownloading", async () => {
+    const updater = new FakeUpdater();
+    const beforeInstall = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    const service = createService({
+      platform: "win32",
+      updater,
+      beforeInstall,
+      fetcher: async () => release("0.2.0"),
+    });
+    await service.check();
+    await service.install();
+    expect(service.status).toMatchObject({
+      state: "downloaded",
+      restartDeferred: true,
+    });
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    const calls = updater.checkForUpdates.mock.calls.length;
+    await service.check();
+    expect(service.status.state).toBe("downloaded");
+    expect(updater.checkForUpdates.mock.calls.length).toBe(calls);
+    await service.install();
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("deduplicates clicks and protects downloading state from rechecks", async () => {
+    const updater = new FakeUpdater();
+    let finish!: () => void;
+    updater.downloadUpdate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            updater.emit("update-downloaded", { version: "0.2.0" });
+            resolve();
+          };
+        }),
+    );
+    const service = createService({
+      platform: "win32",
       updater,
       fetcher: async () => release("0.2.0"),
     });
     await service.check();
-
-    updater.emit("download-progress", { percent: 37.4 });
-    expect(service.status).toMatchObject({
-      state: "downloading",
-      progress: 37,
-    });
-    await expect(service.install()).rejects.toThrow("has not been downloaded");
-
-    updater.emit("update-downloaded", {
-      version: "0.2.0",
-      releaseNotes: "Notes",
-    });
-    expect(service.status).toMatchObject({
-      state: "downloaded",
-      progress: 100,
-    });
-    service.install();
+    const first = service.install();
+    expect(service.install()).toBe(first);
+    await Promise.resolve();
+    expect((await service.check()).state).toBe("downloading");
+    finish();
+    await first;
     expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("shows retryable download errors and never installs unverified bytes", async () => {
+    const updater = new FakeUpdater();
+    updater.downloadUpdate.mockRejectedValueOnce(
+      new Error("checksum mismatch"),
+    );
+    const service = createService({
+      platform: "win32",
+      updater,
+      fetcher: async () => release("0.2.0"),
+    });
+    await service.check();
+    await service.install();
+    expect(service.status).toMatchObject({
+      state: "error",
+      availableVersion: "0.2.0",
+      delivery: "automatic",
+    });
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    await service.install();
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("only enables macOS installation for explicitly signed release builds", async () => {
+    for (const macAutoUpdates of [false, true]) {
+      const updater = new FakeUpdater();
+      const service = createService({
+        platform: "darwin",
+        updater,
+        macAutoUpdates,
+        fetcher: async () => release("0.2.0"),
+      });
+      await service.check();
+      expect(service.status.delivery).toBe(
+        macAutoUpdates ? "automatic" : "manual",
+      );
+      if (macAutoUpdates) {
+        await service.install();
+        expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+      } else {
+        await expect(service.install()).rejects.toThrow("No in-app update");
+        expect(updater.quitAndInstall).not.toHaveBeenCalled();
+      }
+    }
   });
 
   it("reports a missing first public release without trying an installer", async () => {
@@ -169,7 +280,9 @@ describe("version update checks", () => {
     });
     const initialStatus = service.status;
 
-    await expect(service.check({ silent: true })).resolves.toEqual(initialStatus);
+    await expect(service.check({ silent: true })).resolves.toEqual(
+      initialStatus,
+    );
     expect(service.status).toEqual(initialStatus);
     expect(onStatus).not.toHaveBeenCalled();
   });
@@ -193,7 +306,7 @@ describe("version update checks", () => {
     );
   });
 
-  it("keeps a discovered update visible when the silent updater check fails", async () => {
+  it("makes a broken native feed retryable even during a silent startup check", async () => {
     const updater = new FakeUpdater();
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit("checking-for-update");
@@ -211,12 +324,36 @@ describe("version update checks", () => {
     await service.check({ silent: true });
 
     expect(service.status).toMatchObject({
-      state: "available",
+      state: "error",
       availableVersion: "0.2.0",
     });
-    expect(onStatus).toHaveBeenCalledTimes(1);
-    expect(onStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ state: "available" }),
+    expect(onStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: "error" }),
     );
   });
+});
+
+it("does not advertise native updates for unsupported Linux installation formats", async () => {
+  const updater = new FakeUpdater();
+  const service = createService({
+    platform: "linux",
+    linuxPackageType: "AppImage",
+    updater,
+    fetcher: async () => release("0.2.0"),
+  });
+  expect((await service.check()).delivery).toBe("manual");
+  expect(updater.checkForUpdates).not.toHaveBeenCalled();
+});
+
+it("does not install a stale native feed older than the public release", async () => {
+  const updater = new FakeUpdater();
+  const service = createService({
+    platform: "win32",
+    updater,
+    fetcher: async () => release("0.3.0"),
+  });
+  expect((await service.check()).state).toBe("error");
+  await service.install();
+  expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
 });
