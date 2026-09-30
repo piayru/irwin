@@ -1,6 +1,6 @@
 # Install Irwin
 
-Irwin is distributed through GitHub Releases using direct installer downloads, not application stores. No public downloads have been published yet. The names below describe configured build outputs; the Windows candidate and macOS/Ubuntu installers still need the native installation checks listed in the [compatibility matrix](COMPATIBILITY.md).
+Download Irwin installers and SHA-256 checksums from [GitHub Releases](https://github.com/piayru/irwin/releases). The Preview is distributed through direct downloads. Check the release notes and [compatibility matrix](COMPATIBILITY.md) for the automated verification results and pending native installation checks.
 
 The Preview release policy is to ship without a paid publisher certificate or Apple notarization. Each release must state this clearly, include SHA-256 checksums, and identify the tested operating systems and architectures. Signing can be added later without moving distribution to a store. Download both the installer and its checksum from the project's own GitHub Release; a matching checksum confirms the file matches that release, but does not replace publisher verification.
 
@@ -102,6 +102,6 @@ Successful packaging writes `release/Irwin-<version>-mac-arm64.dmg` and `release
 
 Local package output is unsigned unless the maintainer configures platform signing. A package build does not count as native installation validation. See the [compatibility matrix](COMPATIBILITY.md) and [release checklist](RELEASE_CHECKLIST.md) before distributing an installer.
 
-For a public release with in-app updates, build each supported target with the configured GitHub publisher (`pnpm package --publish always`) from a maintainer environment with `GH_TOKEN` set. This uploads installers and updater metadata to GitHub Releases; it does not submit the app to a store. Keep the release public and ensure all platform installers and generated metadata refer to the same version. Do not use this command for local validation.
+For a public release with in-app updates, build each supported target with the configured GitHub publisher. The Desktop packages workflow uses `--publish never` and retains installers, blockmaps, and generated `latest*.yml` metadata as workflow artifacts; upload these files together to the matching GitHub Release after verification. Alternatively, `pnpm package --publish always` from a maintainer environment with `GH_TOKEN` set uploads installers and updater metadata directly. Keep the release public and ensure all platform installers and generated metadata refer to the same version. Do not use `--publish always` for local validation.
 
 There is currently no published Homebrew tap, winget manifest, or hosted APT repository. The commands above install a downloaded `.deb` or build from source; do not use guessed package-manager names to install Irwin.

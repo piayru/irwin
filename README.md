@@ -17,9 +17,9 @@ This English README is the reference for translations. The application currently
 | Ubuntu 22.04 x64                | Targeted by the Linux build, but not validated on a native desktop.                                                                                                       | Not yet supported             |
 | macOS 14+ Intel / Apple Silicon | The maintainer reports DMG installation and launch on an M3 MacBook Air. The exact macOS version and DMG identity, remaining workflows, and Intel acceptance are pending. | Partial native acceptance     |
 
-Public installer downloads will be linked from GitHub Releases when a release is published. Irwin does not require installation through an application store. Preview installers will have no paid publisher signing or Apple notarization; the [installation guide](docs/INSTALLATION.md) explains checksum verification and expected first-launch prompts. The paths produced by local packaging commands are build outputs, not download links.
+Download installers and SHA-256 checksums from [GitHub Releases](https://github.com/piayru/irwin/releases). Irwin does not require installation through an application store. Preview installers have no paid publisher signing or Apple notarization; the [installation guide](docs/INSTALLATION.md) explains checksum verification and expected first-launch prompts.
 
-For version 0.1.0, the configured installer names are `Irwin-0.1.0-win-x64.exe`, `Irwin-0.1.0-linux-x64.deb`, `Irwin-0.1.0-mac-x64.dmg`, and `Irwin-0.1.0-mac-arm64.dmg`. These names describe build outputs; they are not published downloads.
+Installer names follow `Irwin-<version>-win-x64.exe`, `Irwin-<version>-linux-x64.deb`, `Irwin-<version>-mac-x64.dmg`, and `Irwin-<version>-mac-arm64.dmg`. Choose the version and architecture listed on the release page.
 
 ## Features
 
@@ -33,7 +33,7 @@ See the [user guide](docs/USER_GUIDE.md) for workflows and limitations.
 
 ## Install Irwin
 
-See the [installation guide](docs/INSTALLATION.md) for Windows, Ubuntu, and macOS instructions. Public installers are not available yet; platform status and pending native checks are listed in the [compatibility matrix](docs/COMPATIBILITY.md).
+See the [installation guide](docs/INSTALLATION.md) for Windows, Ubuntu, and macOS instructions. Platform status and pending native checks are listed in the [compatibility matrix](docs/COMPATIBILITY.md).
 
 ## Build from source
 

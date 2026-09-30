@@ -38,8 +38,8 @@ describe("release identity", () => {
     expect(deb).toContain("Package: irwin");
 
     const readme = text("README.md");
-    expect(readme).toContain("Irwin-0.1.0-win-x64.exe");
-    expect(readme).toContain("Irwin-0.1.0-linux-x64.deb");
+    expect(readme).toContain("Irwin-<version>-win-x64.exe");
+    expect(readme).toContain("Irwin-<version>-linux-x64.deb");
     expect(readme).not.toContain("Mongo Workbench Setup");
   });
 });

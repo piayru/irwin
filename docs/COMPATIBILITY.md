@@ -32,7 +32,7 @@ This candidate is retained locally and has not been published. It predates subse
 | Package checks    | No package verification diagnostics or unresolved installed dependency notices |
 | Desktop checks    | 59 passed; no reported errors or unverified checks                             |
 
-Installer commands, architecture selection, upgrades, and uninstall behavior are documented in the [installation guide](INSTALLATION.md). Public downloads are not currently published. Each target requires its native acceptance checks before release.
+Installer commands, architecture selection, upgrades, and uninstall behavior are documented in the [installation guide](INSTALLATION.md). Download Preview installers from [GitHub Releases](https://github.com/piayru/irwin/releases); each release records automated package verification separately from pending native desktop acceptance.
 
 ## MongoDB and service compatibility
 

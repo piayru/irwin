@@ -17,9 +17,9 @@
 | Ubuntu 22.04 x64                | Linux 빌드 대상이지만 실제 데스크톱에서 검증하지 않았습니다.                                                                                                      | 정식 지원 미제공         |
 | macOS 14+ Intel / Apple Silicon | 관리자는 M3 MacBook Air에서 DMG로 설치하고 실행했다고 보고했습니다. 정확한 macOS 버전과 DMG 식별 정보, 나머지 작업 흐름, Intel 검증은 아직 확인이 필요합니다.     | 일부 실제 환경 검증 완료 |
 
-릴리스가 공개되면 GitHub Releases에서 설치 파일을 다운로드할 수 있습니다. 앱 스토어를 통한 설치는 필요하지 않습니다. 미리 보기 설치 파일에는 유료 배포자 서명이나 Apple 공증이 없습니다. [설치 가이드](docs/INSTALLATION.md)에서 체크섬 확인과 첫 실행 시 예상되는 경고를 설명합니다. 로컬 패키징 명령이 출력하는 경로는 빌드 결과이며 다운로드 링크가 아닙니다.
+설치 파일과 SHA-256 체크섬은 [GitHub Releases](https://github.com/piayru/irwin/releases)에서 다운로드하세요. 앱 스토어를 통한 설치는 필요하지 않습니다. 미리 보기 설치 파일에는 유료 배포자 서명이나 Apple 공증이 없습니다. [설치 가이드](docs/INSTALLATION.md)에서 체크섬 확인과 첫 실행 시 예상되는 경고를 설명합니다.
 
-버전 0.1.0의 설치 파일 이름은 `Irwin-0.1.0-win-x64.exe`, `Irwin-0.1.0-linux-x64.deb`, `Irwin-0.1.0-mac-x64.dmg`, `Irwin-0.1.0-mac-arm64.dmg`로 설정되어 있습니다. 이 이름은 빌드 결과를 나타내며 아직 공개 다운로드가 제공되지 않습니다.
+설치 파일 이름 형식은 `Irwin-<version>-win-x64.exe`, `Irwin-<version>-linux-x64.deb`, `Irwin-<version>-mac-x64.dmg`, `Irwin-<version>-mac-arm64.dmg`입니다. 릴리스 페이지에서 버전과 아키텍처를 선택하세요.
 
 ## 기능
 
@@ -33,7 +33,7 @@
 
 ## Irwin 설치
 
-Windows, Ubuntu, macOS 설치 방법은 [설치 가이드](docs/INSTALLATION.md)를 참고하세요. 공개 설치 파일은 아직 없습니다. 플랫폼 상태와 미완료 검증 항목은 [호환성 표](docs/COMPATIBILITY.md)에 기록되어 있습니다.
+Windows, Ubuntu, macOS 설치 방법은 [설치 가이드](docs/INSTALLATION.md)를 참고하세요. 플랫폼 상태와 미완료 검증 항목은 [호환성 표](docs/COMPATIBILITY.md)에 기록되어 있습니다.
 
 ## 소스에서 빌드
 

@@ -17,9 +17,9 @@
 | Ubuntu 22.04 x64                | 列為 Linux 建置目標，但尚未在原生桌面驗證。                                                                       | 尚未正式支援 |
 | macOS 14+ Intel / Apple Silicon | 維護者已回報在 M3 MacBook Air 上從 DMG 安裝並啟動。確切 macOS 版本、DMG 身分、其他操作流程與 Intel 驗收仍待補齊。 | 部分原生驗收 |
 
-發行版本發布後，會透過 GitHub Releases 提供公開安裝包下載；不需透過應用程式商店安裝。預覽版安裝包不提供付費的發行者簽章或 Apple 公證。[安裝指南](docs/INSTALLATION.md)說明校驗碼驗證與首次啟動時可能出現的系統提示。本機封裝指令產生的路徑是建置輸出，不是下載連結。
+請從 [GitHub Releases](https://github.com/piayru/irwin/releases) 下載安裝包與 SHA-256 校驗碼，不需透過應用程式商店安裝。預覽版安裝包不提供付費的發行者簽章或 Apple 公證。[安裝指南](docs/INSTALLATION.md)說明校驗碼驗證與首次啟動時可能出現的系統提示。
 
-0.1.0 版設定的安裝包名稱為 `Irwin-0.1.0-win-x64.exe`、`Irwin-0.1.0-linux-x64.deb`、`Irwin-0.1.0-mac-x64.dmg` 與 `Irwin-0.1.0-mac-arm64.dmg`。這些名稱僅代表建置輸出，目前尚未發布下載。
+安裝包名稱格式為 `Irwin-<version>-win-x64.exe`、`Irwin-<version>-linux-x64.deb`、`Irwin-<version>-mac-x64.dmg` 與 `Irwin-<version>-mac-arm64.dmg`。請在發行頁面選擇對應的版本與架構。
 
 ## 功能
 
@@ -33,7 +33,7 @@
 
 ## 安裝 Irwin
 
-Windows、Ubuntu 與 macOS 的安裝方式請見[安裝指南](docs/INSTALLATION.md)。目前尚未提供公開安裝包；平台狀態與待完成的原生驗收列於[相容性矩陣](docs/COMPATIBILITY.md)。
+Windows、Ubuntu 與 macOS 的安裝方式請見[安裝指南](docs/INSTALLATION.md)。平台狀態與待完成的原生驗收列於[相容性矩陣](docs/COMPATIBILITY.md)。
 
 ## 從原始碼建置
 

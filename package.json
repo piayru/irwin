@@ -1,6 +1,6 @@
 {
   "name": "mongo-workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "packageManager": "pnpm@11.1.0",
   "engines": {
@@ -120,6 +120,7 @@
       "maintainer": "Wilbert Yang <zxpiayru@gmail.com>"
     },
     "deb": {
+      "artifactName": "Irwin-${version}-linux-x64.${ext}",
       "packageName": "irwin"
     },
     "mac": {
