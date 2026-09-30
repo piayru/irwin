@@ -4,6 +4,8 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+- Added a Local environment tag for local database connections, including connection badges and operation-receipt filtering.
+
 ## 0.1.1 — 2026-09-30
 
 ### Security

@@ -17,7 +17,7 @@ export const profileSchema = z
     name,
     group: z.string().default(""),
     environment: z
-      .enum(["development", "staging", "production"])
+      .enum(["local", "development", "staging", "production"])
       .default("development"),
     readOnly: z.boolean().optional(),
     provider: z.enum(["mongodb", "cosmos"]).default("mongodb"),

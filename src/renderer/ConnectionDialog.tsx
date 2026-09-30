@@ -612,6 +612,7 @@ export default function ConnectionDialog({
                 setUnlockConfirmation("");
               }}
             >
+              <option value="local">Local</option>
               <option value="development">Development</option>
               <option value="staging">Staging</option>
               <option value="production">Production</option>

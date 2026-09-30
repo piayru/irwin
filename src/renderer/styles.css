@@ -476,6 +476,11 @@ small {
   letter-spacing: 0.06em;
   line-height: 1.15;
 }
+.environment-badge.local {
+  border-color: #547f94;
+  color: #bde8ff;
+  background: #233e4c;
+}
 .environment-badge.development {
   border-color: #587a4e;
   color: #d8efbd;
@@ -4044,6 +4049,12 @@ button {
   ::-webkit-scrollbar-thumb {
   background: var(--theme-scrollbar);
   border-color: var(--bg);
+}
+:is([data-theme="light"], [data-theme="azure"], [data-theme="forest"])
+  .environment-badge.local {
+  border-color: #92bfd3;
+  color: #285c75;
+  background: #e2f2fa;
 }
 :is([data-theme="light"], [data-theme="azure"], [data-theme="forest"])
   .environment-badge.development {
