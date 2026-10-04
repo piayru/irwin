@@ -113,6 +113,7 @@ try {
   const env = { ...process.env, WORKBENCH_USER_DATA: dataDir };
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
+    cwd: process.env.WORKBENCH_PROJECT_DIR || process.cwd(),
     args: [".", "--disable-gpu"],
     env,
     timeout: 30000,
@@ -600,7 +601,7 @@ try {
         .click();
       await page.keyboard.press("F3");
       const documentDialog = page.getByRole("dialog", {
-        name: "Document JSON",
+        name: "View JSON",
         exact: true,
       });
       await expect(documentDialog).toBeVisible();

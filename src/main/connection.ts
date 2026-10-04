@@ -3,6 +3,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { readFile } from "node:fs/promises";
 import { ConnectionString } from "mongodb-connection-string-url";
 import type { Profile, Secrets, ResolvedConnection } from "../shared/contracts";
+import { effectiveConnectionOptions } from "../shared/connection-options";
 
 export interface Route {
   resolved: ResolvedConnection;
@@ -18,6 +19,7 @@ export async function resolveConnection(
   const uriOptions = new Map(
     [...url.searchParams].map(([k, v]) => [k.toLowerCase(), v]),
   );
+  const effective = effectiveConnectionOptions(profile);
   for (const key of [
     "tlsinsecure",
     "tlsallowinvalidcertificates",
@@ -29,11 +31,11 @@ export async function resolveConnection(
       );
   const options: Record<string, any> = {
     appName: "Irwin",
-    serverSelectionTimeoutMS: profile.timeoutMS,
-    connectTimeoutMS: profile.timeoutMS,
-    readPreference: profile.readPreference,
-    writeConcern: { w: profile.writeConcern === "1" ? 1 : "majority" },
-    retryWrites: profile.provider !== "cosmos",
+    serverSelectionTimeoutMS: Number(effective.serverSelectionTimeoutMS.value),
+    connectTimeoutMS: Number(effective.connectTimeoutMS.value),
+    readPreference: effective.readPreference.value,
+    writeConcern: { w: effective.w.value === "majority" ? "majority" : Number(effective.w.value) },
+    retryWrites: effective.retryWrites.value === "true",
   };
   if (profile.username) {
     options.auth = {
@@ -44,7 +46,7 @@ export async function resolveConnection(
   }
   if (profile.authMechanism !== "DEFAULT")
     options.authMechanism = profile.authMechanism;
-  if (profile.tls || profile.provider === "cosmos") options.tls = true;
+  if (effective.tls.value === "true") options.tls = true;
   if (profile.caFile) options.tlsCAFile = profile.caFile;
   if (profile.certFile) options.tlsCertificateKeyFile = profile.certFile;
   if (secrets.certPassword)
@@ -62,9 +64,15 @@ export async function resolveConnection(
   ])
     if (uriOptions.has(key.toLowerCase())) delete options[key];
   if (uriOptions.has("w")) delete options.writeConcern;
+  if (
+    profile.retryWrites === undefined &&
+    profile.provider !== "cosmos" &&
+    uriOptions.has("retrywrites")
+  )
+    delete options.retryWrites;
   if (!profile.ssh.enabled)
     return { resolved: { profile, uri: url.toString(), options }, close() {} };
-  if (url.isSRV || url.hosts.length !== 1 || profile.replicaSet)
+  if (url.isSRV || url.hosts.length !== 1 || effective.replicaSet.value)
     throw new Error(
       "SSH v1 supports a single standard URI target, without replica-set discovery",
     );
@@ -142,7 +150,7 @@ export async function resolveConnection(
     const port = (server.address() as any).port;
     url.hosts = [`127.0.0.1:${port}`];
     options.directConnection = true;
-    if (options.tls || url.searchParams.get("tls") === "true")
+    if (effective.tls.value === "true")
       options.servername = remoteHost;
     ssh.on("close", () => {
       for (const socket of sockets) socket.destroy();

@@ -1,6 +1,6 @@
 import { _electron as electron, expect } from "@playwright/test";
 import assert from "node:assert/strict";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { startTestMongo } from "./helpers/test-mongo.mjs";
 import { MongoClient, Long, ObjectId } from "mongodb";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -10,9 +10,7 @@ import {
   copiedText,
 } from "./helpers/clipboard-check.mjs";
 await mkdir(".runtime/screenshots", { recursive: true });
-const server = await MongoMemoryServer.create({
-  binary: { version: "8.0.18", downloadDir: ".runtime/mongodb" },
-});
+const server = await startTestMongo();
 const client = new MongoClient(server.getUri());
 await client.connect();
 await client
@@ -54,6 +52,7 @@ try {
   };
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
+    cwd: process.env.WORKBENCH_PROJECT_DIR || process.cwd(),
     ...(process.env.WORKBENCH_EXECUTABLE
       ? { executablePath: process.env.WORKBENCH_EXECUTABLE }
       : {}),
@@ -64,6 +63,7 @@ try {
   const page = await app.firstWindow();
   const preferencesDialog = () =>
     page.locator("dialog.preferences-modal[open]");
+  const modelDialog = () => page.locator("dialog.ai-model-manager-modal[open]");
   const openPreferences = async () => {
     const label =
       (await page.locator("html").getAttribute("lang")) === "en"
@@ -249,11 +249,13 @@ try {
   expect(runIconStyle.stroke).not.toBe("transparent");
   expect(runIconStyle.stroke).not.toBe("none");
   checks.push("run icon has visible stroke");
+  await queryActions.locator(".toolbar-more > summary").click();
   const countButton = queryActions.getByRole("button", {
     name: "計算筆數",
     exact: true,
   });
   await expect(countButton).toHaveAttribute("title", "計算符合條件的文件數");
+  await queryActions.locator(".toolbar-more > summary").press("Escape");
   await page.getByRole("button", { name: "執行", exact: true }).click();
   await expect(
     page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ }),
@@ -300,7 +302,7 @@ try {
     name: "新增文件",
     exact: true,
   });
-  await expect(addDocumentButton).toHaveText("");
+  await expect(addDocumentButton).toHaveText("新增文件");
   await expect(addDocumentButton.locator("svg")).toBeVisible();
   const nameHeading = page
     .locator(".grid-heading")
@@ -529,8 +531,9 @@ try {
         el.previousElementSibling?.previousElementSibling?.className,
     })),
   ).toEqual({ previous: "page-range", beforePrevious: "page-actions" });
+  await queryActions.locator(".toolbar-more > summary").click();
   await countButton.click();
-  await expect(page.locator(".count-result")).toHaveText("3");
+  await expect(page.locator(".count-result")).toHaveText("符合 3");
   checks.push("query count");
   checks.push("first and last page controls");
   checks.push("collection query");
@@ -580,17 +583,11 @@ try {
     .locator(".workspace-panel.visible .collection-panel")
     .getByRole("button", { name: "AI 助理", exact: true });
   await assistantTrigger.click();
-  const assistant = page.getByRole("dialog", { name: "AI 助理" });
+  const assistant = page.getByRole("complementary", { name: "AI 助理" });
   await expect(assistant).toBeVisible();
-  await expect(assistant).toHaveAttribute("data-ai-focus-trap", "true");
-  await assistant
-    .getByRole("button", { name: "設定模型", exact: true })
-    .focus();
-  await page.keyboard.press("Tab");
-  await expect(
-    assistant.getByRole("button", { name: "關閉", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Control+p");
+  await expect(assistant).not.toHaveAttribute("aria-modal", "true");
+  await page.getByLabel("FILTER", { exact: true }).focus();
+  await expect(page.getByLabel("FILTER", { exact: true })).toBeFocused();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   await expect(assistant).toBeVisible();
   await assistant
@@ -600,21 +597,25 @@ try {
     preferencesDialog().locator(".preferences-content"),
   ).toHaveAttribute("data-section", "ai");
   await preferencesDialog()
+    .getByRole("button", { name: "管理模型服務", exact: true })
+    .click();
+  await modelDialog()
     .locator('[name="ai-provider-name"]')
     .fill("Smoke local model");
-  await preferencesDialog()
-    .locator('[name="ai-provider-model"]')
-    .fill("qa-model");
-  await preferencesDialog()
+  await modelDialog().locator('[name="ai-provider-model"]').fill("qa-model");
+  await modelDialog()
     .getByRole("button", { name: "儲存模型", exact: true })
     .click();
-  await expect(preferencesDialog().getByRole("status")).toContainText(
-    "模型服務已儲存",
-  );
-  const smokeProviderId = await preferencesDialog()
+  await expect(
+    modelDialog().locator('.success.notice[role="status"]'),
+  ).toContainText("模型服務已儲存");
+  const smokeProviderId = await modelDialog()
     .locator('[name="ai-configured-provider"] option')
     .filter({ hasText: "Smoke local model" })
     .getAttribute("value");
+  await modelDialog()
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
   await preferencesDialog()
     .locator('[name="ai-default-provider"]')
     .selectOption(smokeProviderId);
@@ -635,9 +636,12 @@ try {
     preferencesDialog().locator(".preferences-content"),
   ).toHaveAttribute("data-section", "ai");
   await preferencesDialog()
+    .getByRole("button", { name: "管理模型服務", exact: true })
+    .click();
+  await modelDialog()
     .locator('[name="ai-configured-provider"]')
     .selectOption(smokeProviderId);
-  await preferencesDialog()
+  await modelDialog()
     .getByRole("button", { name: "刪除", exact: true })
     .click();
   const deleteProviderDialog = page.getByRole("dialog", {
@@ -649,8 +653,11 @@ try {
     .click();
   await expect(deleteProviderDialog).toHaveCount(0);
   await expect(
-    preferencesDialog().locator('[name="ai-configured-provider"]'),
+    modelDialog().locator('[name="ai-configured-provider"]'),
   ).toContainText("Smoke local model");
+  await modelDialog()
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
   await preferencesDialog()
     .getByRole("button", { name: "取消", exact: true })
     .click();
@@ -831,7 +838,7 @@ try {
   await page.keyboard.press("F3");
   const documentDialog = page
     .locator("dialog")
-    .filter({ hasText: "Document JSON" });
+    .filter({ hasText: "檢視 JSON" });
   await expect(documentDialog).toBeVisible();
   const documentBox = await documentDialog.boundingBox();
   expect(documentBox?.width ?? 0).toBeGreaterThan(1200);
@@ -912,9 +919,7 @@ try {
   await expect(documentEditor.locator(".view-lines")).toContainText(
     'ObjectId("',
   );
-  await expect(documentEditor.locator(".view-lines")).not.toContainText(
-    "$oid",
-  );
+  await expect(documentEditor.locator(".view-lines")).not.toContainText("$oid");
   await documentEditor.click();
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
@@ -923,7 +928,10 @@ try {
   await page.keyboard.press("Backspace");
   await page.getByRole("button", { name: "格式化文件", exact: true }).click();
   await expect(documentEditor.locator(".view-lines")).toContainText(
-    'Double("1.0")',
+    "ratio: 1.0",
+  );
+  await expect(documentEditor.locator(".view-lines")).not.toContainText(
+    "Double(",
   );
   await page.getByRole("button", { name: "檢視變更", exact: true }).click();
   const documentChangesDialog = page
@@ -997,12 +1005,12 @@ try {
   ).toBeVisible();
   await page.screenshot({ path: ".runtime/screenshots/table.png" });
   await page.getByRole("button", { name: "Tree", exact: true }).click();
-  await expect(page.locator(".tree-header")).toContainText("Key");
-  await expect(page.locator(".tree-header")).toContainText("Value");
-  await expect(page.locator(".tree-header")).toContainText("Type");
+  await expect(page.locator(".tree-header")).toContainText("欄位");
+  await expect(page.locator(".tree-header")).toContainText("值");
+  await expect(page.locator(".tree-header")).toContainText("型別");
   const firstDocument = page
     .locator(".tree-row")
-    .filter({ hasText: "Document 1" })
+    .filter({ hasText: "文件 1" })
     .first();
   await expect(firstDocument).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator(".tree-results")).toContainText("Ada Copy");
@@ -1152,7 +1160,10 @@ try {
   ).toBe(1);
   checks.push("Add Doc");
   await page.getByRole("button", { name: "新增文件", exact: true }).click();
-  const unsavedEditor = page.locator("dialog").filter({ hasText: "Add Doc" });
+  const unsavedEditor = page.getByRole("dialog", {
+    name: "新增文件",
+    exact: true,
+  });
   await unsavedEditor.locator(".monaco-editor").click();
   await page.keyboard.press("Control+a");
   await page.keyboard.insertText('{"name":"Unsaved QA document"}');
@@ -1670,6 +1681,10 @@ try {
   );
   console.log(JSON.stringify({ checks, errors, unverified }));
 } catch (e) {
+  await writeFile(
+    ".runtime/desktop-smoke-partial.json",
+    JSON.stringify({ checks, errors, unverified, failure: String(e) }, null, 2),
+  );
   await writeFile(".runtime/desktop-smoke-error.txt", String(e));
   if (app) {
     try {

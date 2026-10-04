@@ -71,7 +71,10 @@ export async function closeElectronWindowNormally(app) {
                 `Electron did not exit after debugger disconnect (pid=${child.pid}, exitCode=${child.exitCode})`,
               ),
             ),
-          10000,
+          // Windows inspector/transport teardown can lag after the windows close.
+          // Keep the window-close deadline above strict; only debugger exit gets
+          // the longer budget, and still requires a clean process exit.
+          30000,
         );
       }),
     ]);

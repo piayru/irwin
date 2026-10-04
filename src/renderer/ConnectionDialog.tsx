@@ -15,6 +15,10 @@ import {
 } from "../shared/contracts";
 import { Modal, Field, api, useUi, message } from "./ui";
 import { diagnoseConnectionError } from "../shared/connection-diagnostics";
+import {
+  effectiveConnectionOptions,
+  updateConnectionOption,
+} from "../shared/connection-options";
 export default function ConnectionDialog({
   profile,
   close,
@@ -49,7 +53,24 @@ export default function ConnectionDialog({
   );
   const [srv, setSrv] = useState(p.uri.startsWith("mongodb+srv"));
   const set = (key: keyof Profile, value: any) =>
-    setP((old) => ({ ...old, [key]: value }));
+    setP((old) => updateConnectionOption(old, key, value));
+  const configuredUri =
+    mode === "form"
+      ? `mongodb${srv ? "+srv" : ""}://${hosts}/${encodeURIComponent(p.database)}${p.uri.includes("?") ? p.uri.slice(p.uri.indexOf("?")) : ""}`
+      : p.uri;
+  const effective = effectiveConnectionOptions({ ...p, uri: configuredUri });
+  const optionSource = (
+    source: "uri" | "settings" | "provider" | "driver" | "tunnel",
+  ) =>
+    source === "tunnel"
+      ? t("SSH 單一目標轉發", "SSH single-target forwarding")
+      : source === "uri"
+        ? t("來自 URI", "From URI")
+        : source === "provider"
+          ? t("服務相容性預設", "Provider default")
+          : source === "driver"
+            ? t("Driver 預設", "Driver default")
+            : t("連線設定", "Connection settings");
   const requiresUnlock =
     p.environment === "production" && !p.readOnly && unlockRequested;
   const invalidQueryTimeout =
@@ -70,8 +91,7 @@ export default function ConnectionDialog({
   };
   const normalized = () => {
     const result = { ...p, partitionKeys: JSON.parse(keys) };
-    if (mode === "form")
-      result.uri = `mongodb${srv ? "+srv" : ""}://${hosts}/${encodeURIComponent(p.database)}`;
+    result.uri = configuredUri;
     return result;
   };
   const parseUri = async () => {
@@ -147,6 +167,8 @@ export default function ConnectionDialog({
             authorization:
               "連線成功，但帳號沒有目標資料庫或 Collection 的權限。",
             timeout: "伺服器未及時回應，請檢查路由、防火牆與逾時設定。",
+            compatibility:
+              "請在「編輯連線 → 進階設定」將「寫入重試」設為「停用」，儲存後重新連線。",
             unknown: "請檢查連線設定與伺服器紀錄。",
           }[diagnostic.kind],
           diagnostic.advice,
@@ -426,7 +448,7 @@ export default function ConnectionDialog({
         <div className="form-grid">
           <Field label={t("驗證方式", "Authentication method")}>
             <select
-              value={p.authMechanism}
+              value={effective.authMechanism.value}
               onChange={(e) => set("authMechanism", e.target.value)}
             >
               <option value="DEFAULT">Auto / None</option>
@@ -437,7 +459,7 @@ export default function ConnectionDialog({
           </Field>
           <Field label="authSource">
             <input
-              value={p.authSource}
+              value={effective.authSource.value}
               onChange={(e) => set("authSource", e.target.value)}
             />
           </Field>
@@ -478,7 +500,8 @@ export default function ConnectionDialog({
           <label className="checkbox full">
             <input
               type="checkbox"
-              checked={p.tls}
+              checked={effective.tls.value === "true"}
+              disabled={p.provider === "cosmos"}
               onChange={(e) => set("tls", e.target.checked)}
             />
             {t(
@@ -664,7 +687,7 @@ export default function ConnectionDialog({
           )}
           <Field label="Replica set">
             <input
-              value={p.replicaSet}
+              value={effective.replicaSet.value}
               onChange={(e) => set("replicaSet", e.target.value)}
             />
           </Field>
@@ -673,7 +696,7 @@ export default function ConnectionDialog({
               type="number"
               min={1000}
               max={120000}
-              value={p.timeoutMS}
+              value={effective.serverSelectionTimeoutMS.value}
               onChange={(e) => set("timeoutMS", Number(e.target.value))}
             />
           </Field>
@@ -728,7 +751,8 @@ export default function ConnectionDialog({
           </Field>
           <Field label="Read preference">
             <select
-              value={p.readPreference}
+              value={effective.readPreference.value}
+              aria-label="Read preference"
               onChange={(e) => set("readPreference", e.target.value)}
             >
               {[
@@ -742,23 +766,84 @@ export default function ConnectionDialog({
               ))}
             </select>
           </Field>
+          <Field
+            full
+            label={t("寫入重試（Retryable writes）", "Retryable writes")}
+          >
+            <select
+              name="connection-retry-writes"
+              value={
+                p.retryWrites === undefined ? "default" : String(p.retryWrites)
+              }
+              onChange={(e) =>
+                set(
+                  "retryWrites",
+                  e.target.value === "default"
+                    ? undefined
+                    : e.target.value === "true",
+                )
+              }
+            >
+              <option value="default">{t("使用預設", "Use defaults")}</option>
+              <option value="false">{t("停用", "Disabled")}</option>
+              <option value="true">{t("啟用", "Enabled")}</option>
+            </select>
+            <small>
+              {t(
+                "預設使用 URI 的設定；Cosmos 預設停用。明確啟用或停用會覆寫 URI，儲存後需重新連線。",
+                "Defaults follow the URI; Cosmos defaults to disabled. An explicit choice overrides the URI. Save and reconnect to apply it.",
+              )}
+            </small>
+          </Field>
           <Field label="Write concern">
             <select
-              value={p.writeConcern}
+              value={effective.w.value}
               onChange={(e) => set("writeConcern", e.target.value)}
             >
               <option value="majority">majority</option>
               <option value="1">1</option>
+              {!["majority", "1"].includes(effective.w.value) && (
+                <option value={effective.w.value}>
+                  {effective.w.value} (URI)
+                </option>
+              )}
             </select>
           </Field>
           <label className="checkbox full">
             <input
               type="checkbox"
-              checked={p.directConnection}
+              checked={effective.directConnection.value === "true"}
+              disabled={p.ssh.enabled}
               onChange={(e) => set("directConnection", e.target.checked)}
             />
             directConnection
           </label>
+          <div className="connection-effective-settings full">
+            <strong>{t("生效設定", "Effective settings")}</strong>
+            <p>
+              {t(
+                "下方顯示 Driver 將使用的值與來源。修改上方欄位會同步更新對應 URI 選項；儲存並重新連線後套用。",
+                "These are the values and sources the driver will use. Editing the fields also updates their URI options. Save and reconnect to apply.",
+              )}
+            </p>
+            <dl>
+              {Object.entries(effective)
+                .filter(
+                  ([key]) => !["authSource", "authMechanism"].includes(key),
+                )
+                .map(([key, option]) => (
+                  <div key={key}>
+                    <dt>{key}</dt>
+                    <dd>
+                      <code>
+                        {option.value || t("未指定", "Not specified")}
+                      </code>
+                      <small>{optionSource(option.source)}</small>
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+          </div>
           <Field
             full
             label={t(

@@ -47,6 +47,7 @@ const check = async (name, fn) => {
 };
 const launch = async () => {
   app = await electron.launch({
+    cwd: process.env.WORKBENCH_PROJECT_DIR || process.cwd(),
     args: [".", "--disable-gpu"],
     env,
     timeout: 30000,
@@ -115,6 +116,7 @@ try {
   await active()
     .getByLabel("PROJECTION", { exact: true })
     .fill("{_id:0,marker:1,count:1}");
+  await active().locator(".toolbar-more > summary").click();
   await active()
     .getByRole("button", { name: "Save query", exact: true })
     .click();
@@ -153,6 +155,7 @@ try {
     .getByRole("button", { name: "Save query", exact: true })
     .click();
   await expect(dialog()).toHaveCount(0);
+  await active().locator(".toolbar-more > summary").click();
   await active()
     .getByRole("button", { name: "Open saved queries", exact: true })
     .click();
@@ -274,6 +277,7 @@ try {
   await active()
     .getByRole("button", { name: "Free command", exact: true })
     .click();
+  await active().locator(".toolbar-more > summary").click();
   await active()
     .getByRole("button", { name: "Save query", exact: true })
     .click();

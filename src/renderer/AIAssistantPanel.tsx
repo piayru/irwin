@@ -304,11 +304,11 @@ export function AIAssistantPanel({
   };
 
   const enable = async () => {
-    if (!effectiveProviderId) {
+    if (!provider) {
       setError(
         t(
-          "請先在偏好設定新增模型服務。",
-          "Add a model service in Preferences first.",
+          "請先選擇模型服務，或在偏好設定中設定預設模型。",
+          "Choose a model service or set a default model in Preferences first.",
         ),
       );
       return;
@@ -429,10 +429,18 @@ export function AIAssistantPanel({
                 "Enable AI for each database connection. You can turn it off at any time.",
               )}
             </p>
+            {providers.length > 0 && !provider && (
+              <p>
+                {t(
+                  "請在上方選擇模型服務，或設定全域預設模型。",
+                  "Choose a model service above or set a global default model.",
+                )}
+              </p>
+            )}
             <button
               className="primary"
               type="button"
-              disabled={!providers.length}
+              disabled={!provider}
               onClick={() => void enable()}
             >
               {t("為此連線啟用", "Enable for this connection")}
@@ -638,20 +646,21 @@ export function AIAssistantPanel({
                 {busy ? (
                   <button
                     type="button"
-                    className="icon"
                     onClick={() => void cancel()}
                     aria-label={t("取消請求", "Cancel request")}
                   >
                     <Square size={15} />
+                    {t("取消請求", "Cancel request")}
                   </button>
                 ) : (
                   <button
                     type="submit"
-                    className="primary icon"
+                    className="primary"
                     disabled={!question.trim()}
                     aria-label={t("送出", "Send")}
                   >
                     <Send size={15} />
+                    {t("送出", "Send")}
                   </button>
                 )}
               </div>

@@ -91,12 +91,18 @@ export default function WorkspaceHome({
                           <span aria-hidden="true"> / </span>
                           {profile.group || profile.database}
                         </span>
-                        <span className={`environment-badge ${profile.environment}`}>
-                          {profile.environment.toUpperCase()}
-                        </span>
-                        {profile.readOnly && (
-                          <span className="read-only-badge">READ ONLY</span>
-                        )}
+                        <div className="home-connection-badges">
+                          <span
+                            className={`environment-badge ${profile.environment}`}
+                          >
+                            {profile.environment.toUpperCase()}
+                          </span>
+                          {profile.readOnly && (
+                            <span className="read-only-badge">
+                              {t("唯讀", "Read only")}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span
                         className={`connection-state ${online ? "is-online" : ""}`}
@@ -173,14 +179,14 @@ export default function WorkspaceHome({
                     "Checking system credential storage.",
                   )
                 : secure
-                ? t(
-                    "連線設定儲存在本機，密碼由作業系統加密保護。",
-                    "Connection settings stay on this device. Passwords use operating-system encryption.",
-                  )
-                : t(
-                    "系統安全儲存不可用，密碼只保留於本次工作階段。",
-                    "Secure storage is unavailable. Passwords are kept for this session only.",
-                  )}
+                  ? t(
+                      "連線設定儲存在本機，密碼由作業系統加密保護。",
+                      "Connection settings stay on this device. Passwords use operating-system encryption.",
+                    )
+                  : t(
+                      "系統安全儲存不可用，密碼只保留於本次工作階段。",
+                      "Secure storage is unavailable. Passwords are kept for this session only.",
+                    )}
             </p>
           </div>
         </section>

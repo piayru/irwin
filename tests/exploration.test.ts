@@ -6,21 +6,35 @@ import {
   summarizeExplain,
   analyzeDocuments,
 } from "../src/shared/exploration";
+import { object } from "../src/shared/bson";
 describe("MongoDB exploration", () => {
   it("adds typed predicates without overwriting an existing condition", () => {
     const value = { $oid: "6a4f6bffbed892721b94b460" };
     expect(
       JSON.parse(buildCellFilter('{kind:"sync"}', "kind", "async", "and")),
     ).toEqual({ $and: [{ kind: "sync" }, { kind: { $eq: "async" } }] });
-    expect(JSON.parse(buildCellFilter("{}", "_id", value, "only"))).toEqual({
-      _id: { $eq: value },
-    });
+    expect(
+      object(buildCellFilter("{}", "_id", value, "only"))._id.$eq.toHexString(),
+    ).toBe(value.$oid);
     expect(
       JSON.parse(buildCellFilter("{}", "absent", undefined, "only")),
     ).toEqual({ absent: { $exists: false } });
     expect(JSON.parse(buildCellFilter("{}", "value", null, "only"))).toEqual({
       value: { $eq: null, $exists: true },
     });
+  });
+  it("writes ObjectId cell filters in shell syntax while accepting Extended JSON", () => {
+    const hex = "6a4f6bffbed892721b94b460";
+    const fromExtendedJson = buildCellFilter(
+      "{}",
+      "_id",
+      { $oid: hex },
+      "only",
+    );
+    expect(fromExtendedJson).toContain(`ObjectId("${hex}")`);
+    expect(object(fromExtendedJson)._id.$eq.toHexString()).toBe(hex);
+    expect(object(`{ _id: ObjectId("${hex}") }`)._id.toHexString()).toBe(hex);
+    expect(object(`{ _id: { $oid: "${hex}" } }`)._id.toHexString()).toBe(hex);
   });
   it("rejects ambiguous field paths and never executes a filter expression", () => {
     expect(() => buildCellFilter("{}", "$bad", 1, "only")).toThrow();

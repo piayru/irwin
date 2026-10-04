@@ -8,7 +8,14 @@ import type {
   Row,
   ResolvedConnection,
 } from "../shared/contracts";
-import { encode, decode, object, sameDocument, size } from "../shared/bson";
+import {
+  encode,
+  decode,
+  getPath,
+  object,
+  sameDocument,
+  size,
+} from "../shared/bson";
 import {
   assertWritable,
   identity,
@@ -504,7 +511,7 @@ export class DatabaseService {
         const spec = updateSpec(
           original,
           p.field,
-          decode(p.value),
+          decode(p.value, getPath(original, p.field).value),
           profile,
           p.database,
           p.collection,
@@ -549,7 +556,7 @@ export class DatabaseService {
         if (!capability.conditionalEditing)
           throw new Error(capability.conditionalEditingReason);
         const original = object(p.original);
-        const replacement = object(p.document);
+        const replacement = object(p.document, original);
         if (size(replacement) > 16 * 1024 * 1024)
           throw new Error("Document exceeds 16 MB");
         const spec = replaceSpec(

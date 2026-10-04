@@ -32,53 +32,11 @@ import {
   reconcileTableColumnWidths,
 } from "./result-layout";
 import { queryResultNotice, type QueryState } from "./query-state";
-import { formatBsonDate } from "./datetime";
 import { gridScrollOffset, moveGridSelection } from "./grid-keyboard";
+import { label, editedValue } from "./result-values";
 
 export { prettyDocument } from "./json-format";
-
-export function editedValue(original: any, text: string): string {
-  if (typeof original === "string") return JSON.stringify(text);
-  if (original && typeof original === "object") {
-    if (Object.hasOwn(original, "$date")) {
-      const date = new Date(text);
-      if (Number.isNaN(date.valueOf())) throw new Error("Invalid date");
-      return JSON.stringify({ $date: { $numberLong: String(date.valueOf()) } });
-    }
-    const key = Object.keys(original)[0];
-    if (
-      [
-        "$numberInt",
-        "$numberLong",
-        "$numberDouble",
-        "$numberDecimal",
-        "$oid",
-      ].includes(key)
-    )
-      return JSON.stringify({ [key]: text });
-  }
-  return JSON.stringify(JSON.parse(text));
-}
-
-function dateText(value: any, settings?: Partial<Settings>) {
-  const date = new Date(Number(value?.$date?.$numberLong ?? value?.$date));
-  if (Number.isNaN(date.valueOf())) return String(value);
-  return formatBsonDate(date, settings);
-}
-
-export function label(value: any, settings?: Partial<Settings>): string {
-  if (value === undefined) return "undefined";
-  if (typeof value === "string") return value;
-  if (value === null) return "null";
-  if (typeof value !== "object") return String(value);
-  if (value.$oid) return value.$oid;
-  if (value.$numberLong !== undefined) return value.$numberLong;
-  if (value.$numberInt !== undefined) return value.$numberInt;
-  if (value.$numberDouble !== undefined) return value.$numberDouble;
-  if (value.$numberDecimal !== undefined) return value.$numberDecimal;
-  if (value.$date) return dateText(value, settings);
-  return JSON.stringify(value);
-}
+export { label, editedValue } from "./result-values";
 
 function needsCellPreview(text: string, columnWidth: number) {
   const visibleCharacterBudget = Math.max(
@@ -507,7 +465,9 @@ export function Results({
         ? ""
         : typeof value === "string"
           ? value
-          : JSON.stringify(value);
+          : value && typeof value === "object" && typeof value.$oid === "string"
+            ? `ObjectId(${JSON.stringify(value.$oid)})`
+            : JSON.stringify(value);
     void api.request("clipboard.write", { text });
   };
   const selectCell = (next: GridCell, reveal = true) => {
@@ -643,7 +603,7 @@ export function Results({
             }}
           >
             <span>
-              Key
+              {t("欄位", "Key")}
               <span
                 className="column-resizer tree-column-resizer"
                 title={t("拖曳調整欄寬", "Drag to resize column")}
@@ -651,7 +611,7 @@ export function Results({
               />
             </span>
             <span>
-              Value
+              {t("值", "Value")}
               <span
                 className="column-resizer tree-column-resizer"
                 title={t("拖曳調整欄寬", "Drag to resize column")}
@@ -659,7 +619,7 @@ export function Results({
               />
             </span>
             <span>
-              Type
+              {t("型別", "Type")}
               <span
                 className="column-resizer tree-column-resizer"
                 title={t("拖曳調整欄寬", "Drag to resize column")}
@@ -671,7 +631,7 @@ export function Results({
             {rows.map((row, i) => (
               <TreeNode
                 key={`${i}-${row.ejson.length}`}
-                name={`Document ${i + 1}`}
+                name={t(`文件 ${i + 1}`, `Document ${i + 1}`)}
                 value={JSON.parse(row.ejson)}
                 settings={ui}
                 defaultOpen={i === 0}
@@ -911,7 +871,6 @@ export function Results({
                       "numberLong",
                       "numberDouble",
                       "numberDecimal",
-                      "oid",
                       "date",
                       "binary",
                       "timestamp",
