@@ -26,6 +26,21 @@ export function bsonType(value: any): string {
     : "Object";
 }
 export type FilterAction = "only" | "and" | "or" | "exclude" | "today" | "week";
+function shellFilterValue(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(shellFilterValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    if (Object.keys(value).length === 1 && typeof value.$oid === "string")
+      return `ObjectId(${JSON.stringify(value.$oid)})`;
+    return `{${Object.entries(value)
+      .map(([key, item]) => `${JSON.stringify(key)}:${shellFilterValue(item)}`)
+      .join(",")}}`;
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined)
+    throw new Error("Cannot encode an undefined MongoDB filter value");
+  return encoded;
+}
+
 export function buildCellFilter(
   current: string,
   path: string,
@@ -55,9 +70,9 @@ export function buildCellFilter(
       ...(value === null && action !== "exclude" ? { $exists: true } : {}),
     };
   const next = { [path]: condition };
-  if (action === "only") return JSON.stringify(next);
+  if (action === "only") return shellFilterValue(next);
   const previous = JSON.parse(encode(object(current)));
-  return JSON.stringify(
+  return shellFilterValue(
     Object.keys(previous).length
       ? { [action === "or" ? "$or" : "$and"]: [previous, next] }
       : next,

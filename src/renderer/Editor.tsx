@@ -67,6 +67,7 @@ export function CodeEditor({
   onReady,
   onSelectionChange,
   completionContext,
+  validationError,
 }: {
   value: string;
   onChange?: (v: string) => void;
@@ -79,6 +80,7 @@ export function CodeEditor({
   onReady?: (editor: editor.IStandaloneCodeEditor) => void;
   onSelectionChange?: (selectedText: string) => void;
   completionContext?: CompletionContext;
+  validationError?: { line: number; column: number; message: string };
 }) {
   const {
     editorFontFamily,
@@ -88,6 +90,33 @@ export function CodeEditor({
     editorPadding,
   } = useUi();
   const editorRef = useRef<editor.IStandaloneCodeEditor | undefined>(undefined);
+  const updateValidation = (instance = editorRef.current) => {
+    const model = instance?.getModel();
+    if (!model) return;
+    const line = validationError
+      ? Math.min(validationError.line, model.getLineCount())
+      : 1;
+    const column = validationError
+      ? Math.min(validationError.column, model.getLineMaxColumn(line))
+      : 1;
+    monaco.editor.setModelMarkers(
+      model,
+      "document-validation",
+      validationError
+        ? [
+            {
+              severity: monaco.MarkerSeverity.Error,
+              message: validationError.message,
+              startLineNumber: line,
+              endLineNumber: line,
+              startColumn: column,
+              endColumn: Math.min(column + 1, model.getLineMaxColumn(line)),
+            },
+          ]
+        : [],
+    );
+  };
+  useEffect(() => updateValidation(), [validationError, value]);
   const foldingRun = useRef(0);
   const context = useRef(completionContext);
   context.current = completionContext;
@@ -149,6 +178,7 @@ export function CodeEditor({
       onChange={(v) => onChange?.(v || "")}
       onMount={(instance) => {
         editorRef.current = instance;
+        updateValidation(instance);
         if (defaultExpandedDepth !== undefined)
           applyDefaultFolding(
             instance,

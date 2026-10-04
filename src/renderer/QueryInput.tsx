@@ -88,13 +88,12 @@ export function QueryInput({
         item.label.toLowerCase().startsWith(word.toLowerCase()),
     )
     .slice(0, 12);
+  const activeOption = Math.min(selected, Math.max(0, options.length - 1));
+  const suggestionsOpen = open && !!options.length;
   const accept = (index: number) => {
     const item = options[index];
     if (!item) return;
-    const text =
-      item.label === "ObjectId"
-        ? '{ "$oid": "000000000000000000000000" }'
-        : item.insertText;
+    const text = item.insertText;
     const start = position - word.length;
     onChange(value.slice(0, start) + text + value.slice(position));
     setOpen(false);
@@ -156,7 +155,11 @@ export function QueryInput({
           )}
           aria-label={label}
           role="combobox"
-          aria-expanded={open && !!options.length}
+          aria-expanded={suggestionsOpen}
+          aria-controls={suggestionsOpen ? `${id}-suggestions` : undefined}
+          aria-activedescendant={
+            suggestionsOpen ? `${id}-suggestion-${activeOption}` : undefined
+          }
           aria-autocomplete="list"
           value={value}
           spellCheck={false}
@@ -241,12 +244,19 @@ export function QueryInput({
           }}
         />
         {open && !!options.length && (
-          <div role="listbox" className="query-suggestions">
+          <div
+            role="listbox"
+            id={`${id}-suggestions`}
+            aria-label={t("查詢建議", "Query suggestions")}
+            className="query-suggestions"
+          >
             {options.map((item, i) => (
               <button
                 key={item.label}
+                id={`${id}-suggestion-${i}`}
                 role="option"
-                aria-selected={i === selected}
+                aria-selected={i === activeOption}
+                tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => accept(i)}
               >
@@ -256,6 +266,14 @@ export function QueryInput({
             ))}
           </div>
         )}
+        <span className="sr-only" role="status">
+          {suggestionsOpen
+            ? t(
+                `${options.length} 個建議，使用上下鍵選擇，Enter 套用，Escape 關閉。`,
+                `${options.length} suggestions. Use arrow keys to select, Enter to accept, Escape to close.`,
+              )
+            : ""}
+        </span>
       </div>
       {error && (
         <small className="query-format-error" role="alert">

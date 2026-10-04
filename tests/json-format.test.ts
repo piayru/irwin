@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { Decimal128, Double, Int32, Long, ObjectId } from "bson";
-import { formatDocument, prettyDocument, shellJsonLanguage } from "../src/renderer/json-format";
+import {
+  formatDocument,
+  formatEditableDocument,
+  prettyDocument,
+  shellJsonLanguage,
+} from "../src/renderer/json-format";
 import { decode, encode } from "../src/shared/bson";
 
 describe("JSON document formatting", () => {
@@ -13,27 +18,32 @@ describe("JSON document formatting", () => {
     ).toContain("    profile: {");
   });
 
-  it("keeps BSON values readable and type-safe in shell-friendly syntax", () => {
-    expect(
-      prettyDocument(
-        {
-          _id: { $oid: "6a4f6bffbed892721b94b460" },
-          number1: { $numberInt: "1" },
-          number2: { $numberDouble: "1.2" },
-        },
-        { indent: 2 },
-      ),
-    ).toContain(
-      'ObjectId("6a4f6bffbed892721b94b460")',
-    );
-    expect(prettyDocument({ number1: { $numberInt: "1" } }, { indent: 2 })).toContain(
-      'number1: Int32("1")',
-    );
+  it("shows exact numeric values without BSON type labels in the JSON view", () => {
+    const displayed = prettyDocument({
+      _id: { $oid: "507f1f77bcf86cd799439011" },
+      count: { $numberInt: "7" },
+      score: { $numberDouble: "1.2" },
+      largeLong: { $numberLong: "9007199254740993" },
+      price: { $numberDecimal: "1234.50" },
+      createdAt: { $date: { $numberLong: "1735787045000" } },
+      nested: [{ count: { $numberInt: "2" } }],
+    });
+    expect(displayed).toContain('ObjectId("507f1f77bcf86cd799439011")');
+    expect(displayed).toContain('ISODate("2025-01-02T03:04:05.000Z")');
+    expect(displayed).toContain("count: 7");
+    expect(displayed).toContain("score: 1.2");
+    expect(displayed).toContain("largeLong: 9007199254740993");
+    expect(displayed).toContain("price: 1234.50");
+    expect(displayed).toContain("count: 2");
+    expect(displayed).not.toMatch(/(?:Int32|Long|Double|Decimal128)\(/);
   });
   it("formats JSON or shell-friendly documents with the configured indentation", () => {
-    expect(formatDocument("{\"name\":\"Ada\",\"n\":{\"$numberInt\":\"1\"}}", 4)).toContain(
-      '    n: Int32("1")',
+    const formatted = formatDocument(
+      '{"name":"Ada","n":{"$numberInt":"1"}}',
+      4,
     );
+    expect(formatted).toContain("    n: 1");
+    expect(formatted).not.toContain("Int32(");
   });
 
   it("formats a manually entered single-quoted ISODate without changing its value", () => {
@@ -61,24 +71,89 @@ describe("JSON document formatting", () => {
       createdAt: new Date("2025-01-02T03:04:05.000Z"),
     };
     const source = encode(document);
-    const expected = prettyDocument(JSON.parse(source), { indent: 2 });
     const editable = formatDocument(source, 2);
 
-    expect(editable).toBe(expected);
     expect(editable).toContain('ObjectId("507f1f77bcf86cd799439011")');
-    expect(editable).toContain('Int32("7")');
-    expect(editable).toContain('Double("1.0")');
-    expect(editable).toContain('Long("42")');
-    expect(editable).toContain('Long("9007199254740993")');
-    expect(editable).toContain('Decimal128("1234.50")');
+    expect(editable).toContain("count: 7");
+    expect(editable).not.toContain("Int32(");
+    expect(editable).toContain("score: 1.0");
+    expect(editable).toContain("exactLong: 42");
+    expect(editable).toContain("largeLong: 9007199254740993");
+    expect(editable).toContain("price: 1234.50");
+    expect(editable).not.toMatch(/(?:Int32|Long|Double|Decimal128)\(/);
     expect(editable).toContain('ISODate("2025-01-02T03:04:05.000Z")');
-    expect(encode(decode(editable))).toBe(source);
-    const reformatted = formatDocument(editable, 4);
-    expect(reformatted).toContain('    _id: ObjectId("507f1f77bcf86cd799439011")');
-    expect(encode(decode(reformatted))).toBe(source);
+    expect(encode(decode(editable, decode(source)))).toBe(source);
+    const reformatted = formatDocument(editable, 4, source);
+    expect(reformatted).toContain(
+      '    _id: ObjectId("507f1f77bcf86cd799439011")',
+    );
+    expect(encode(decode(reformatted, decode(source)))).toBe(source);
     expect(() => decode('{ _id: ObjectId("invalid") }')).toThrow();
     expect(() => decode('{ count: Int32("2147483648") }')).toThrow();
     expect(() => decode('{ count: Long("9223372036854775808") }')).toThrow();
+  });
+
+  it("keeps numeric BSON types when editing plain numbers in objects and arrays", () => {
+    const original = decode(
+      '{"count":{"$numberInt":"7"},"score":{"$numberDouble":"1.0"},"long":{"$numberLong":"42"},"nested":[{"price":{"$numberDecimal":"1.20"}}]}',
+    );
+    const edited = decode(
+      "{ count: 8, score: 2, long: 43, nested: [{ price: 1.234567890123456789012345678901234 }] }",
+      original,
+    );
+    expect(encode(edited)).toBe(
+      '{"count":{"$numberInt":"8"},"score":{"$numberDouble":"2.0"},"long":{"$numberLong":"43"},"nested":[{"price":{"$numberDecimal":"1.234567890123456789012345678901234"}}]}',
+    );
+  });
+
+  it("never rounds a large integer pasted as JSON or shell syntax", () => {
+    for (const input of ['{"n":9007199254740993}', "{ n: 9007199254740993 }"])
+      expect(encode(decode(input))).toBe(
+        '{"n":{"$numberLong":"9007199254740993"}}',
+      );
+  });
+
+  it("rejects edits that would overflow or lose precision in the original numeric type", () => {
+    const original = decode(
+      '{"count":{"$numberInt":"1"},"long":{"$numberLong":"42"},"score":{"$numberDouble":"1.0"}}',
+    );
+    expect(() => decode("{ count: 2147483648 }", original)).toThrow(/int32/i);
+    expect(() => decode("{ long: 9223372036854775808 }", original)).toThrow(
+      /int64/i,
+    );
+    expect(() =>
+      decode("{ score: 1.000000000000000000001 }", original),
+    ).toThrow(/precision/i);
+    expect(
+      encode(decode('{ count: { $numberLong: "2147483648" } }', original)),
+    ).toBe('{"count":{"$numberLong":"2147483648"}}');
+  });
+
+  it("round-trips special numeric values without constructor labels", () => {
+    const source =
+      '{"negativeZero":{"$numberDouble":"-0.0"},"nan":{"$numberDouble":"NaN"},"infinite":{"$numberDouble":"Infinity"},"decimal":{"$numberDecimal":"-Infinity"}}';
+    const displayed = formatDocument(source, 2);
+    expect(displayed).toContain("negativeZero: -0.0");
+    expect(displayed).toContain("nan: NaN");
+    expect(displayed).toContain("infinite: Infinity");
+    expect(displayed).not.toMatch(/(?:Double|Decimal128)\(/);
+    expect(encode(decode(displayed, decode(source)))).toBe(source);
+  });
+
+  it("remembers explicit numeric type changes after formatting plain editor text", () => {
+    const source = '{"n":{"$numberInt":"1"}}';
+    const formatted = formatEditableDocument(
+      '{ n: { $numberDecimal: "1.20" } }',
+      2,
+      source,
+    );
+    expect(formatted.value).toContain("n: 1.20");
+    expect(encode(decode(formatted.value, decode(formatted.ejson)))).toBe(
+      '{"n":{"$numberDecimal":"1.20"}}',
+    );
+    expect(encode(decode("{ n: 1.21 }", decode(formatted.ejson)))).toBe(
+      '{"n":{"$numberDecimal":"1.21"}}',
+    );
   });
 
   it("uses a diagnostic-free Mongo JSON mode for display", () => {

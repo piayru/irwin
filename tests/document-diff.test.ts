@@ -11,8 +11,8 @@ describe("document changes", () => {
     ).toEqual([
       { path: "meta.active", kind: "changed", before: "true", after: "false" },
       { path: "name", kind: "changed", before: '"Ada"', after: '"Grace"' },
-      { path: "new", kind: "added", after: 'Int32("2")' },
-      { path: "old", kind: "removed", before: 'Int32("1")' },
+      { path: "new", kind: "added", after: "2" },
+      { path: "old", kind: "removed", before: "1" },
     ]);
   });
 
@@ -33,9 +33,46 @@ describe("document changes", () => {
       {
         path: "count",
         kind: "changed",
-        before: 'Double("1.0")',
-        after: 'Int32("1")',
+        before: "1.0",
+        after: "1",
       },
+    ]);
+  });
+
+  it("compares plain editor numbers using the original BSON numeric types", () => {
+    expect(
+      documentChanges(
+        '{"count":{"$numberDouble":"1.0"},"price":{"$numberDecimal":"1.20"}}',
+        "{ count: 1.0, price: 1.20 }",
+      ),
+    ).toEqual([]);
+    expect(
+      documentChanges('{"price":{"$numberDecimal":"1.20"}}', "{ price: 1.21 }"),
+    ).toEqual([
+      { path: "price", kind: "changed", before: "1.20", after: "1.21" },
+    ]);
+  });
+
+  it("detects an explicit BSON numeric type change even when the displayed values match", () => {
+    expect(
+      documentChanges(
+        '{"price":{"$numberDouble":"1.2"}}',
+        '{ price: { $numberDecimal: "1.2" } }',
+      ),
+    ).toEqual([
+      { path: "price", kind: "changed", before: "1.2", after: "1.2" },
+    ]);
+  });
+
+  it("reviews a formatted explicit type change against the original server snapshot", () => {
+    expect(
+      documentChanges(
+        '{"price":{"$numberDouble":"1.2"}}',
+        "{ price: 1.2 }",
+        '{"price":{"$numberDecimal":"1.2"}}',
+      ),
+    ).toEqual([
+      { path: "price", kind: "changed", before: "1.2", after: "1.2" },
     ]);
   });
 });

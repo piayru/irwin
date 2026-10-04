@@ -36,12 +36,19 @@ export function AISettingsSection({
   const { t } = useUi();
   const [providers, setProviders] = useState<ProviderRecord[]>([]);
   const [draft, setDraft] = useState<AiProvider>(emptyProvider);
+  const [baseline, setBaseline] = useState<AiProvider>(draft);
+  const [managingModels, setManagingModels] = useState(false);
+  const [discardAction, setDiscardAction] = useState<
+    { kind: "close" } | { kind: "select"; id: string }
+  >();
   const [apiKey, setApiKey] = useState("");
   const [isNew, setIsNew] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const modelDirty =
+    JSON.stringify(draft) !== JSON.stringify(baseline) || !!apiKey;
 
   const load = async () => {
     const value = (await api.request(
@@ -57,7 +64,9 @@ export function AISettingsSection({
 
   const selectProvider = (id: string) => {
     if (!id) {
-      setDraft(emptyProvider());
+      const empty = emptyProvider();
+      setDraft(empty);
+      setBaseline(empty);
       setApiKey("");
       setIsNew(true);
       return;
@@ -70,8 +79,19 @@ export function AISettingsSection({
       ...provider
     } = selected;
     setDraft(provider);
+    setBaseline(provider);
     setApiKey("");
     setIsNew(false);
+  };
+  const requestSelectProvider = (id: string) => {
+    if (busy) return;
+    if (modelDirty) setDiscardAction({ kind: "select", id });
+    else selectProvider(id);
+  };
+  const closeManager = () => {
+    if (busy) return;
+    if (modelDirty) setDiscardAction({ kind: "close" });
+    else setManagingModels(false);
   };
 
   const saveProvider = async (test = false) => {
@@ -96,11 +116,13 @@ export function AISettingsSection({
       })) as ProviderRecord;
       await load();
       window.dispatchEvent(new Event(AI_SETTINGS_CHANGED));
-      setDraft({
-        ...saved,
-        hasApiKey: undefined,
-        persistentApiKey: undefined,
-      } as AiProvider);
+      const {
+        hasApiKey: _hasKey,
+        persistentApiKey: _persistent,
+        ...provider
+      } = saved;
+      setDraft(provider);
+      setBaseline(provider);
       setIsNew(false);
       setApiKey("");
       if (!saved.persistentApiKey && saved.hasApiKey)
@@ -214,180 +236,282 @@ export function AISettingsSection({
         </Field>
       </div>
 
-      <div className="ai-provider-editor">
-        <div className="ai-provider-list-head">
-          <Field label={t("已設定的模型服務", "Configured model services")}>
-            <select
-              name="ai-configured-provider"
-              value={isNew ? "" : draft.id}
-              onChange={(event) => selectProvider(event.target.value)}
-            >
-              <option value="">
-                {t("新增模型服務…", "Add a model service…")}
-              </option>
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name} · {provider.kind}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <button
-            type="button"
-            className="icon"
-            aria-label={t("新增模型服務", "Add model service")}
-            title={t("新增模型服務", "Add model service")}
-            onClick={() => selectProvider("")}
-          >
-            <Plus size={15} />
-          </button>
-        </div>
-
-        <div className="preferences-form-grid">
-          <Field label={t("顯示名稱", "Name")}>
-            <input
-              name="ai-provider-name"
-              value={draft.name}
-              onChange={(event) =>
-                setDraft({ ...draft, name: event.target.value })
-              }
-              placeholder={t("例如：本機 Qwen", "For example: Local Qwen")}
-            />
-          </Field>
-          <Field label={t("服務介面", "Provider interface")}>
-            <select
-              name="ai-provider-interface"
-              value={draft.kind}
-              onChange={(event) => {
-                const kind = event.target.value as AiProvider["kind"];
-                setDraft({ ...draft, kind, baseUrl: endpointFor(kind) });
-              }}
-            >
-              <option value="openai-compatible">
-                OpenAI compatible · Ollama · vLLM
-              </option>
-              <option value="anthropic">Anthropic</option>
-              <option value="gemini">Gemini</option>
-            </select>
-          </Field>
-          <Field label={t("服務位址", "Service URL")} full>
-            <input
-              name="ai-provider-url"
-              value={draft.baseUrl}
-              onChange={(event) =>
-                setDraft({ ...draft, baseUrl: event.target.value })
-              }
-              autoComplete="url"
-              spellCheck={false}
-            />
-            <small>
-              {t(
-                "使用 HTTPS；本機 localhost 可使用 HTTP。",
-                "Use HTTPS. HTTP is allowed for localhost.",
-              )}
-            </small>
-          </Field>
-          <Field label={t("模型名稱", "Model name")}>
-            <input
-              name="ai-provider-model"
-              value={draft.model}
-              onChange={(event) =>
-                setDraft({ ...draft, model: event.target.value })
-              }
-              placeholder="gpt-4.1-mini / claude-sonnet / gemini-2.5-flash"
-            />
-          </Field>
-          <Field
-            label={t(
-              "API 金鑰（本機模型可留空）",
-              "API key (optional for local models)",
-            )}
-          >
-            <input
-              type="password"
-              name="ai-provider-key"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              autoComplete="new-password"
-              placeholder={
-                isNew
-                  ? ""
-                  : t(
-                      "留白以保留已儲存金鑰",
-                      "Leave blank to keep the saved key",
-                    )
-              }
-            />
-          </Field>
-        </div>
-
-        <label className="ai-insecure-toggle">
-          <input
-            type="checkbox"
-            name="ai-allow-insecure-http"
-            checked={draft.allowInsecureHttp}
-            onChange={(event) =>
-              setDraft({ ...draft, allowInsecureHttp: event.target.checked })
-            }
-          />
-          <span>
-            {t("允許內網 HTTP（未加密）", "Allow insecure HTTP on a LAN")}
-          </span>
-        </label>
-        {draft.allowInsecureHttp && (
-          <div className="warning notice">
+      <div className="ai-model-manager-entry">
+        <div>
+          <strong>{t("模型服務", "Model services")}</strong>
+          <p>
             {t(
-              "API 金鑰與查詢脈絡會以未加密方式傳送到此端點。",
-              "The API key and query context will travel to this endpoint without encryption.",
+              `已設定 ${providers.length} 個服務。模型與金鑰在獨立視窗中儲存；此頁只儲存全域預設與資料傳送偏好。`,
+              `${providers.length} services configured. Models and keys are saved in their own window; this page saves only the global default and data-sharing preferences.`,
             )}
-          </div>
-        )}
-
-        <div className="ai-provider-actions">
-          <button
-            type="button"
-            disabled={busy || isNew}
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 size={14} /> {t("刪除", "Delete")}
-          </button>
-          <span />
-          <button
-            type="button"
-            disabled={busy || !draft.name.trim() || !draft.model.trim()}
-            onClick={() => void saveProvider()}
-          >
-            {t("儲存模型", "Save model")}
-          </button>
-          <button
-            className="primary"
-            type="button"
-            disabled={busy || !draft.name.trim() || !draft.model.trim()}
-            onClick={() => void saveProvider(true)}
-          >
-            <Wifi size={14} />{" "}
-            {busy ? t("測試中…", "Testing…") : t("儲存並測試", "Save and test")}
-          </button>
+          </p>
         </div>
-        {(notice || error) && (
-          <div
-            className={error ? "error notice" : "success notice"}
-            role={error ? "alert" : "status"}
-          >
-            {error || notice}
-          </div>
-        )}
-        {!isNew &&
-          providers.find((item) => item.id === draft.id)?.persistentApiKey && (
-            <small className="ai-key-status">
-              <ShieldCheck size={13} />{" "}
-              {t(
-                "API 金鑰已使用作業系統安全儲存。",
-                "The API key is protected by operating-system secure storage.",
-              )}
-            </small>
-          )}
+        <button
+          type="button"
+          onClick={() => {
+            selectProvider(providers[0]?.id || "");
+            setError("");
+            setNotice("");
+            setManagingModels(true);
+          }}
+        >
+          {t("管理模型服務", "Manage model services")}
+        </button>
       </div>
+      {!managingModels && error && (
+        <div className="error notice" role="alert">
+          {error}
+        </div>
+      )}
+      {managingModels && (
+        <Modal
+          wide
+          className="ai-model-manager-modal"
+          title={t("管理模型服務", "Manage model services")}
+          close={closeManager}
+          footer={
+            <>
+              <span className="model-save-status" role="status">
+                {busy
+                  ? t("正在處理…", "Working…")
+                  : modelDirty
+                    ? t("模型有尚未儲存的變更", "Unsaved model changes")
+                    : t("模型設定已同步", "Model settings saved")}
+              </span>
+              <button type="button" disabled={busy} onClick={closeManager}>
+                {t("取消", "Cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={
+                  busy ||
+                  !draft.name.trim() ||
+                  !draft.model.trim() ||
+                  !modelDirty
+                }
+                onClick={() => void saveProvider()}
+              >
+                {t("儲存模型", "Save model")}
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={busy || !draft.name.trim() || !draft.model.trim()}
+                onClick={() => void saveProvider(true)}
+              >
+                <Wifi size={14} />
+                {t("儲存並測試", "Save and test")}
+              </button>
+            </>
+          }
+        >
+          <p className="hint">
+            {t(
+              "儲存模型會立即套用。取消只會捨棄尚未儲存的模型草稿；已儲存的服務不受外層偏好設定取消影響。",
+              "Saving applies the model immediately. Cancel discards only the unsaved model draft; cancelling Preferences does not undo a saved service.",
+            )}
+          </p>
+          <fieldset className="ai-provider-editor" disabled={busy}>
+            <div className="ai-provider-list-head">
+              <Field label={t("已設定的模型服務", "Configured model services")}>
+                <select
+                  name="ai-configured-provider"
+                  value={isNew ? "" : draft.id}
+                  onChange={(event) =>
+                    requestSelectProvider(event.target.value)
+                  }
+                  disabled={busy}
+                >
+                  <option value="">
+                    {t("新增模型服務…", "Add a model service…")}
+                  </option>
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name} · {provider.kind}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <button
+                type="button"
+                className="icon"
+                aria-label={t("新增模型服務", "Add model service")}
+                title={t("新增模型服務", "Add model service")}
+                disabled={busy}
+                onClick={() => requestSelectProvider("")}
+              >
+                <Plus size={15} />
+              </button>
+            </div>
+
+            <div className="preferences-form-grid">
+              <Field label={t("顯示名稱", "Name")}>
+                <input
+                  name="ai-provider-name"
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft({ ...draft, name: event.target.value })
+                  }
+                  placeholder={t("例如：本機 Qwen", "For example: Local Qwen")}
+                />
+              </Field>
+              <Field label={t("服務介面", "Provider interface")}>
+                <select
+                  name="ai-provider-interface"
+                  value={draft.kind}
+                  onChange={(event) => {
+                    const kind = event.target.value as AiProvider["kind"];
+                    setDraft({ ...draft, kind, baseUrl: endpointFor(kind) });
+                  }}
+                >
+                  <option value="openai-compatible">
+                    OpenAI compatible · Ollama · vLLM
+                  </option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="gemini">Gemini</option>
+                </select>
+              </Field>
+              <Field label={t("服務位址", "Service URL")} full>
+                <input
+                  name="ai-provider-url"
+                  value={draft.baseUrl}
+                  onChange={(event) =>
+                    setDraft({ ...draft, baseUrl: event.target.value })
+                  }
+                  autoComplete="url"
+                  spellCheck={false}
+                />
+                <small>
+                  {t(
+                    "使用 HTTPS；本機 localhost 可使用 HTTP。",
+                    "Use HTTPS. HTTP is allowed for localhost.",
+                  )}
+                </small>
+              </Field>
+              <Field label={t("模型名稱", "Model name")}>
+                <input
+                  name="ai-provider-model"
+                  value={draft.model}
+                  onChange={(event) =>
+                    setDraft({ ...draft, model: event.target.value })
+                  }
+                  placeholder="gpt-4.1-mini / claude-sonnet / gemini-2.5-flash"
+                />
+              </Field>
+              <Field
+                label={t(
+                  "API 金鑰（本機模型可留空）",
+                  "API key (optional for local models)",
+                )}
+              >
+                <input
+                  type="password"
+                  name="ai-provider-key"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  autoComplete="new-password"
+                  placeholder={
+                    isNew
+                      ? ""
+                      : t(
+                          "留白以保留已儲存金鑰",
+                          "Leave blank to keep the saved key",
+                        )
+                  }
+                />
+              </Field>
+            </div>
+
+            <label className="ai-insecure-toggle">
+              <input
+                type="checkbox"
+                name="ai-allow-insecure-http"
+                checked={draft.allowInsecureHttp}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    allowInsecureHttp: event.target.checked,
+                  })
+                }
+              />
+              <span>
+                {t("允許內網 HTTP（未加密）", "Allow insecure HTTP on a LAN")}
+              </span>
+            </label>
+            {draft.allowInsecureHttp && (
+              <div className="warning notice">
+                {t(
+                  "API 金鑰與查詢脈絡會以未加密方式傳送到此端點。",
+                  "The API key and query context will travel to this endpoint without encryption.",
+                )}
+              </div>
+            )}
+
+            <div className="ai-provider-actions">
+              <button
+                type="button"
+                disabled={busy || isNew}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 size={14} /> {t("刪除", "Delete")}
+              </button>
+              <span />
+            </div>
+            {(notice || error) && (
+              <div
+                className={error ? "error notice" : "success notice"}
+                role={error ? "alert" : "status"}
+              >
+                {error || notice}
+              </div>
+            )}
+            {!isNew &&
+              providers.find((item) => item.id === draft.id)
+                ?.persistentApiKey && (
+                <small className="ai-key-status">
+                  <ShieldCheck size={13} />{" "}
+                  {t(
+                    "API 金鑰已使用作業系統安全儲存。",
+                    "The API key is protected by operating-system secure storage.",
+                  )}
+                </small>
+              )}
+          </fieldset>
+        </Modal>
+      )}
+      {discardAction && (
+        <Modal
+          title={t("捨棄模型變更？", "Discard model changes?")}
+          close={() => setDiscardAction(undefined)}
+          footer={
+            <>
+              <button onClick={() => setDiscardAction(undefined)}>
+                {t("繼續編輯", "Keep editing")}
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  const action = discardAction;
+                  setDiscardAction(undefined);
+                  setApiKey("");
+                  setDraft(baseline);
+                  if (action.kind === "close") setManagingModels(false);
+                  else selectProvider(action.id);
+                }}
+              >
+                {t("捨棄變更", "Discard changes")}
+              </button>
+            </>
+          }
+        >
+          <p>
+            {t(
+              "尚未儲存的模型設定與新輸入的金鑰會被捨棄。已儲存的模型不會更動。",
+              "The unsaved model settings and newly entered key will be discarded. Saved models will remain unchanged.",
+            )}
+          </p>
+        </Modal>
+      )}
       {confirmDelete && (
         <Modal
           title={t("刪除模型服務？", "Delete model service?")}

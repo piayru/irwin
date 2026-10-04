@@ -1,6 +1,6 @@
 import { _electron as electron, expect } from "@playwright/test";
 import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { closeElectronWindowNormally } from "./helpers/close-electron.mjs";
@@ -18,16 +18,17 @@ const server = await MongoMemoryServer.create({
 const client = await new MongoClient(server.getUri()).connect();
 const longField =
   "a_very_long_field_name_that_must_not_push_the_column_panel_beyond_its_own_bounds";
+const referenceId = new ObjectId("507f1f77bcf86cd799439011");
 await client
   .db("independent_qa")
   .collection("documents")
   .insertMany(
     Array.from({ length: 180 }, (_, i) => ({
-      _id: `qa-${String(i).padStart(3, "0")}`,
-      kind: "async",
+      _id: i === 179 ? referenceId : `qa-${String(i).padStart(3, "0")}`,
+      kind: i === 179 ? referenceId : "async",
       description:
         `Document ${i}: ` + "Long content beside frozen columns. ".repeat(20),
-      config: { enabled: i % 2 === 0, title: `Nested ${i}` },
+      config: { enabled: i % 2 === 0, title: `Nested ${i}`, count: i },
       [longField]: `Long field ${i}`,
       ...Object.fromEntries(
         Array.from({ length: 28 }, (_, n) => [`field_${n}`, `value-${i}-${n}`]),
@@ -124,9 +125,15 @@ const checkPinned = async () => {
     .evaluate((el) => {
       const viewport = el.getBoundingClientRect();
       const headings = [...el.querySelectorAll(".pinned-heading")];
+      const headerBottom = el
+        .querySelector(".grid-head")
+        .getBoundingClientRect().bottom;
       const row = [...el.querySelectorAll(".grid-row")].find((r) => {
         const b = r.getBoundingClientRect();
-        return b.y > viewport.y + 38 && b.bottom < viewport.bottom - 20;
+        return (
+          b.y >= headerBottom &&
+          b.bottom <= viewport.bottom - (el.offsetHeight - el.clientHeight)
+        );
       });
       if (!row) return { error: "No completely visible row" };
       const cells = [...row.querySelectorAll(".pinned-cell")];
@@ -221,6 +228,124 @@ try {
     .getByRole("button", { name: "documents", exact: true })
     .click();
   await expect(cell("qa-000")).toBeVisible({ timeout: 30000 });
+
+  await check(
+    "ObjectId filters accept shell and Extended JSON forms",
+    async () => {
+      const hex = referenceId.toHexString();
+      try {
+        await query(`{kind: ObjectId("${hex}")}`);
+        await expect(
+          active().locator(".grid-cell.type-oid").first(),
+        ).toBeVisible();
+        await query(`{kind: { $oid: "${hex}" }}`);
+        await expect(
+          active().locator(".grid-cell.type-oid").first(),
+        ).toBeVisible();
+      } finally {
+        await query("{}");
+      }
+    },
+  );
+  await check(
+    "ObjectId autocomplete inserts the friendly constructor",
+    async () => {
+      const filter = active().getByLabel("FILTER", { exact: true });
+      try {
+        await filter.fill("{kind:Obj");
+        await filter.press("Enter");
+        await expect(filter).toHaveValue(
+          '{kind:ObjectId("000000000000000000000000")',
+        );
+      } finally {
+        await query("{}");
+      }
+    },
+  );
+  await check(
+    "Copying an ObjectId table cell uses Mongo shell syntax",
+    async () => {
+      const hex = referenceId.toHexString();
+      try {
+        await query(`{kind: ObjectId("${hex}")}`);
+        const oidCell = active().locator(".grid-cell.type-oid").nth(1);
+        await expect(oidCell).toBeVisible();
+        await oidCell.click();
+        await page.keyboard.press("Control+c");
+        await expect
+          .poll(() => copiedText(app, nativeClipboard))
+          .toBe(`ObjectId("${hex}")`);
+      } finally {
+        await query("{}");
+      }
+    },
+  );
+  await check("ObjectId table cells display Mongo shell syntax", async () => {
+    const hex = referenceId.toHexString();
+    try {
+      await query(`{kind: ObjectId("${hex}")}`);
+      await expect(
+        active().locator(".grid-cell.type-oid").first(),
+      ).toContainText(`ObjectId("${hex}")`);
+    } finally {
+      await query("{}");
+    }
+  });
+  await check(
+    "ObjectId cells stay editable in the friendly format",
+    async () => {
+      const hex = referenceId.toHexString();
+      try {
+        await query(`{kind: ObjectId("${hex}")}`);
+        const oidCell = active().locator(".grid-cell.type-oid").nth(1);
+        await oidCell.dblclick();
+        const editor = active().getByLabel("Edit cell", { exact: true });
+        await expect(editor).toHaveValue(`ObjectId("${hex}")`);
+        await editor.fill(`ObjectId("${hex}")`);
+        await editor.press("Enter");
+        await expect(
+          active().locator(".grid-cell.type-oid").first(),
+        ).toBeVisible();
+      } finally {
+        await page.keyboard.press("Escape");
+        await query("{}");
+      }
+    },
+  );
+  await check(
+    "document editing shows Int32 values as ordinary JSON numbers",
+    async () => {
+      const hex = referenceId.toHexString();
+      let documentDialog;
+      try {
+        await query(`{kind: ObjectId("${hex}")}`);
+        await active()
+          .locator(".grid-cell.type-oid")
+          .first()
+          .click({ button: "right" });
+        await active()
+          .getByRole("button", { name: "Edit document", exact: true })
+          .click();
+        documentDialog = page.getByRole("dialog", {
+          name: "Edit document",
+          exact: true,
+        });
+        await expect(documentDialog).toBeVisible();
+        const viewLines = documentDialog.locator(".monaco-editor .view-lines");
+        const normalizedContent = async () =>
+          (await viewLines.innerText()).replace(/[\u00a0\u202f]/g, " ");
+        await expect.poll(normalizedContent).toMatch(/count:\s*179/);
+        const content = await normalizedContent();
+        expect(content).not.toContain("Int32(");
+      } finally {
+        if (documentDialog && (await documentDialog.count()))
+          await documentDialog
+            .locator(".modal-head-actions button[aria-label='Close']")
+            .click();
+        await query("{}");
+      }
+    },
+  );
 
   await check(
     "Shift click, Shift arrows and drag keep one selected cell; clipboard is scalar",
@@ -360,21 +485,15 @@ try {
       await expect(active().locator(".pinned-heading")).toHaveCount(1);
       await panel().getByLabel("kind", { exact: true }).check();
       await expect(active().locator(".pinned-heading")).toHaveCount(2);
-      await option("config")
-        .getByTitle("Expand / collapse nested columns")
-        .click();
+      await option("config").locator("button[aria-expanded]").click();
       await expect(
         panel().getByLabel("config.enabled", { exact: true }),
       ).toBeVisible();
-      await option("config")
-        .getByTitle("Expand / collapse nested columns")
-        .click();
+      await option("config").locator("button[aria-expanded]").click();
       await expect(
         panel().getByLabel("config.enabled", { exact: true }),
       ).toHaveCount(0);
-      await option("config")
-        .getByTitle("Expand / collapse nested columns")
-        .click();
+      await option("config").locator("button[aria-expanded]").click();
       await panel()
         .getByLabel("Remember this collection layout", { exact: true })
         .check();

@@ -1,9 +1,13 @@
 import { ConnectionString } from "mongodb-connection-string-url";
 import type { Profile, Secrets } from "../shared/contracts";
+import { effectiveConnectionOptions } from "../shared/connection-options";
 
 export type UriExport = { uri: string; omissions: string[] };
 
 function setOption(uri: ConnectionString, key: string, value?: string) {
+  for (const existing of [...uri.searchParams.keys()])
+    if (existing.toLowerCase() === key.toLowerCase())
+      uri.searchParams.delete(existing);
   if (value === undefined || value === "") uri.searchParams.delete(key);
   else uri.searchParams.set(key, value);
 }
@@ -18,20 +22,10 @@ export function exportMongoUri(
   uri.pathname = `/${encodeURIComponent(profile.database)}`;
   uri.username = profile.username;
   uri.password = includePassword ? secrets.password || "" : "";
-  setOption(uri, "authSource", profile.authSource);
-  setOption(
-    uri,
-    "authMechanism",
-    profile.authMechanism === "DEFAULT" ? undefined : profile.authMechanism,
-  );
-  setOption(uri, "tls", profile.tls || profile.provider === "cosmos" ? "true" : undefined);
+  const effective = effectiveConnectionOptions(profile);
+  for (const [key, option] of Object.entries(effective))
+    setOption(uri, key, option.value === "DEFAULT" ? undefined : option.value);
   uri.searchParams.delete("ssl");
-  setOption(uri, "replicaSet", profile.replicaSet);
-  setOption(uri, "directConnection", profile.directConnection ? "true" : undefined);
-  setOption(uri, "readPreference", profile.readPreference);
-  setOption(uri, "w", profile.writeConcern);
-  setOption(uri, "serverSelectionTimeoutMS", String(profile.timeoutMS));
-  setOption(uri, "connectTimeoutMS", String(profile.timeoutMS));
   const omissions = [
     profile.caFile && "CA certificate file",
     profile.certFile && "client certificate file",

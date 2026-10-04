@@ -46,6 +46,7 @@ export const profileSchema = z
       ])
       .default("primary"),
     writeConcern: z.enum(["majority", "1"]).default("majority"),
+    retryWrites: z.boolean().optional(),
     timeoutMS: z.number().int().min(1000).max(120000).default(10000),
     queryTimeoutMS: z.number().int().min(5000).max(120000).default(30000),
     partitionKeys: z.record(z.string(), z.string()).default({}),

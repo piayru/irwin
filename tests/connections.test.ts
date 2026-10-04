@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, test, expect } from "vitest";
 import { MongoMemoryServer, MongoMemoryReplSet } from "mongodb-memory-server";
 import { MongoClient } from "mongodb";
+import { ConnectionString } from "mongodb-connection-string-url";
 import { Server, utils } from "ssh2";
 import { generateKeyPairSync, createHash } from "node:crypto";
 import { connect as connectSocket } from "node:net";
@@ -232,6 +233,84 @@ test("replica-set discovery and reconnect", async () => {
     expect((await open(profile, {})).connected).toBe(true);
   } finally {
     await database.closeAll();
+    await repl.stop();
+  }
+}, 60000);
+
+test("disabled retryable writes reach the server without a transaction number", async () => {
+  const repl = await MongoMemoryReplSet.create({
+    binary,
+    replSet: { count: 1 },
+  });
+  let route: Route | undefined;
+  let profile: Profile | undefined;
+  try {
+    const uri = new ConnectionString(repl.getUri("retry_writes_qa"));
+    uri.searchParams.set("retryWrites", "false");
+    profile = base({
+      uri: uri.toString(),
+      username: "",
+      database: "retry_writes_qa",
+    });
+    route = await resolveConnection(profile, {});
+    route.resolved.options.monitorCommands = true;
+    await database.connect(route.resolved);
+    const client = database.get(profile.id).client;
+    const inserts: { retryable: boolean }[] = [];
+    client.on("commandStarted", (event) => {
+      if (event.commandName === "insert")
+        inserts.push({ retryable: Object.hasOwn(event.command, "txnNumber") });
+    });
+    const document = {
+      cardId: "nested-json-fixture",
+      title: "巢狀 JSON 測試",
+      ready: true,
+      displayOrder: 19,
+      gridLayout: { w: 8, h: 20 },
+      inputs: ["record"],
+      providerConfig: {
+        panel: {
+          calculations: [
+            {
+              pairing: { maxDateDifferenceDays: 0 },
+              computedFields: [
+                {
+                  formula: "first / second * 100",
+                  precision: 2,
+                  defaultValue: null,
+                },
+              ],
+            },
+          ],
+          fields: [{ format: "{value} µg/dL", defaultValue: null }],
+        },
+      },
+    };
+    await database.execute("documents.insert", {
+      connectionId: profile.id,
+      database: "retry_writes_qa",
+      collection: "documents",
+      document: JSON.stringify(document),
+    });
+    expect(inserts).toEqual([{ retryable: false }]);
+    const collection = client.db("retry_writes_qa").collection("documents");
+    expect(
+      Number(
+        await collection.countDocuments({ cardId: "nested-json-fixture" }),
+      ),
+    ).toBe(1);
+    const stored = await collection.findOne(
+      { cardId: "nested-json-fixture" },
+      { promoteValues: true },
+    );
+    expect(stored!.providerConfig.panel.fields[0].format).toBe("{value} µg/dL");
+    expect(
+      stored!.providerConfig.panel.calculations[0].computedFields[0]
+        .defaultValue,
+    ).toBeNull();
+  } finally {
+    if (profile) await database.close(profile.id);
+    route?.close();
     await repl.stop();
   }
 }, 60000);

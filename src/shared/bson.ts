@@ -41,6 +41,125 @@ function parseErrorMessage(error: unknown): string {
 export function encode(value: unknown): string {
   return EJSON.stringify(value, { relaxed: false });
 }
+
+class ParsedNumber {
+  constructor(
+    readonly text: string,
+    readonly location?: { line?: number; column?: number },
+  ) {}
+}
+
+function numericParts(text: string) {
+  const match = /^([+-]?)(\d*\.?\d*)(?:[eE]([+-]?\d+))?$/.exec(text);
+  if (!match || !/\d/.test(match[2])) return undefined;
+  const [whole, fraction = ""] = match[2].split(".");
+  const allDigits = (whole + fraction).replace(/^0+/, "");
+  if (!allDigits) return { sign: "", digits: "0", exponent: 0 };
+  const digits = allDigits.replace(/0+$/, "");
+  return {
+    sign: match[1] === "-" ? "-" : "",
+    digits,
+    exponent:
+      Number(match[3] || 0) -
+      fraction.length +
+      allDigits.length -
+      digits.length,
+  };
+}
+
+function numericIdentity(text: string) {
+  const parts = numericParts(text);
+  return parts ? `${parts.sign}${parts.digits}e${parts.exponent}` : text;
+}
+
+function integerText(text: string): string | undefined {
+  const parts = numericParts(text);
+  if (!parts || parts.exponent < 0 || parts.digits.length + parts.exponent > 19)
+    return undefined;
+  return parts.sign + parts.digits + "0".repeat(parts.exponent);
+}
+
+function numericValue(value: ParsedNumber, original: any): any {
+  const { text } = value;
+  try {
+    const type = original?._bsontype;
+    if (type === "Decimal128") {
+      Decimal128.fromString(text);
+      return { $numberDecimal: text };
+    }
+    if (type === "Long") {
+      const integer = integerText(text);
+      if (integer === undefined)
+        throw new Error("Invalid int64: an integer in range is required");
+      csvValue(integer, "int64");
+      return { $numberLong: integer };
+    }
+    if (type === "Int32") {
+      const integer = integerText(text);
+      if (integer === undefined)
+        throw new Error("Invalid int32: an integer in range is required");
+      csvValue(integer, "int32");
+      return { $numberInt: integer };
+    }
+    const number = Number(text);
+    const special = ["NaN", "Infinity", "-Infinity"].includes(text);
+    const exactDouble =
+      special || numericIdentity(text) === numericIdentity(String(number));
+    if (type === "Double") {
+      if (!exactDouble)
+        throw new Error(
+          "This double would lose precision; use Extended JSON to explicitly change its BSON type",
+        );
+      return { $numberDouble: Object.is(number, -0) ? "-0.0" : text };
+    }
+    if (special || Object.is(number, -0))
+      return { $numberDouble: Object.is(number, -0) ? "-0.0" : text };
+    if (!Number.isSafeInteger(number)) {
+      const integer = integerText(text);
+      if (integer !== undefined) {
+        const n = BigInt(integer);
+        if (n >= -(1n << 63n) && n < 1n << 63n) return { $numberLong: integer };
+      }
+    }
+    if (!exactDouble || !Number.isFinite(number)) {
+      Decimal128.fromString(text);
+      return { $numberDecimal: text };
+    }
+    return number;
+  } catch (error) {
+    const location = value.location;
+    const where = location?.line
+      ? `line ${location.line}, column ${(location.column ?? 0) + 1}: `
+      : "";
+    throw new Error(`${where}${parseErrorMessage(error)}`, { cause: error });
+  }
+}
+
+function restoreNumbers(value: any, original: any): any {
+  if (value instanceof ParsedNumber) return numericValue(value, original);
+  if (Array.isArray(value))
+    return value.map((item, index) =>
+      restoreNumbers(
+        item,
+        Array.isArray(original) ? original[index] : undefined,
+      ),
+    );
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      restoreNumbers(
+        item,
+        original && Object.hasOwn(original, key) ? original[key] : undefined,
+      ),
+    ]),
+  );
+}
+
+function numericLiteralText(node: any): string {
+  const raw = (node.extra?.raw ?? String(node.value)).replaceAll("_", "");
+  return /^0[xob]/i.test(raw) ? BigInt(raw).toString() : raw;
+}
 function shellKey(node: any): string {
   if (node.type === "Identifier") return node.name;
   if (node.type === "StringLiteral" || node.type === "NumericLiteral")
@@ -72,10 +191,7 @@ function shellDate(node: any, constructor: "ISODate" | "Date"): unknown {
       );
     if (!dateOnly && !dateTime)
       throw new Error(`${constructor} requires an ISO date string`);
-    const [year, month, day] = stringValue
-      .slice(0, 10)
-      .split("-")
-      .map(Number);
+    const [year, month, day] = stringValue.slice(0, 10).split("-").map(Number);
     const calendarDate = new Date(0);
     calendarDate.setUTCHours(0, 0, 0, 0);
     calendarDate.setUTCFullYear(year, month - 1, day);
@@ -121,87 +237,107 @@ function shellStringArgument(node: any, constructor: string): string {
 function shellValue(node: any): any {
   try {
     switch (node.type) {
-    case "ObjectExpression": {
-      const value: Record<string, any> = {};
-      for (const property of node.properties) {
-        if (
-          property.type !== "ObjectProperty" ||
-          property.computed ||
-          property.method ||
-          property.shorthand
-        )
-          throw new Error("Only literal Mongo shell object properties are supported");
-        const key = shellKey(property.key);
-        Object.defineProperty(value, key, {
-          configurable: true,
-          enumerable: true,
-          writable: true,
-          value: shellValue(property.value),
-        });
-      }
-      return value;
-    }
-    case "ArrayExpression":
-      return node.elements.map((element: any) => {
-        if (!element) throw new Error("Sparse arrays are not supported");
-        return shellValue(element);
-      });
-    case "StringLiteral":
-    case "NumericLiteral":
-    case "BooleanLiteral":
-      return node.value;
-    case "NullLiteral":
-      return null;
-    case "UnaryExpression":
-      if ((node.operator === "-" || node.operator === "+") && node.argument.type === "NumericLiteral")
-        return node.operator === "-" ? -node.argument.value : node.argument.value;
-      throw new Error("Only numeric unary operators are supported");
-    case "ParenthesizedExpression":
-      return shellValue(node.expression);
-    case "CallExpression": {
-      if (node.optional || node.callee.type !== "Identifier")
-        throw new Error("Only literal Mongo BSON constructors are supported");
-      const constructor = node.callee.name;
-      if (constructor === "ISODate") return shellDate(node, "ISODate");
-      if (constructor === "ObjectId") {
-        const value = shellStringArgument(node, constructor);
-        if (!/^[\da-fA-F]{24}$/.test(value))
-          throw new Error("ObjectId requires 24 hexadecimal characters");
-        return { $oid: value };
-      }
-      if (["Int32", "NumberInt"].includes(constructor)) {
-        const value = shellStringArgument(node, constructor);
-        csvValue(value, "int32");
-        return { $numberInt: value };
-      }
-      if (["Long", "NumberLong"].includes(constructor)) {
-        const value = shellStringArgument(node, constructor);
-        csvValue(value, "int64");
-        return { $numberLong: value };
-      }
-      if (constructor === "Double") {
-        const value = shellStringArgument(node, constructor);
-        if (
-          !/^(?:NaN|Infinity|-Infinity|-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$/.test(
-            value,
+      case "ObjectExpression": {
+        const value: Record<string, any> = {};
+        for (const property of node.properties) {
+          if (
+            property.type !== "ObjectProperty" ||
+            property.computed ||
+            property.method ||
+            property.shorthand
           )
+            throw new Error(
+              "Only literal Mongo shell object properties are supported",
+            );
+          const key = shellKey(property.key);
+          Object.defineProperty(value, key, {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: shellValue(property.value),
+          });
+        }
+        return value;
+      }
+      case "ArrayExpression":
+        return node.elements.map((element: any) => {
+          if (!element) throw new Error("Sparse arrays are not supported");
+          return shellValue(element);
+        });
+      case "StringLiteral":
+      case "BooleanLiteral":
+        return node.value;
+      case "NumericLiteral":
+        return new ParsedNumber(numericLiteralText(node), node.loc?.start);
+      case "Identifier":
+        if (["NaN", "Infinity"].includes(node.name))
+          return new ParsedNumber(node.name, node.loc?.start);
+        throw new Error(`Unsupported Mongo shell expression: ${node.type}`);
+      case "NullLiteral":
+        return null;
+      case "UnaryExpression":
+        if (
+          (node.operator === "-" || node.operator === "+") &&
+          node.argument.type === "NumericLiteral"
         )
-          throw new Error("Double requires a valid numeric string");
-        return { $numberDouble: value };
+          return new ParsedNumber(
+            (node.operator === "-" ? "-" : "") +
+              numericLiteralText(node.argument),
+            node.loc?.start,
+          );
+        if (
+          node.operator === "-" &&
+          node.argument.type === "Identifier" &&
+          node.argument.name === "Infinity"
+        )
+          return new ParsedNumber("-Infinity", node.loc?.start);
+        throw new Error("Only numeric unary operators are supported");
+      case "ParenthesizedExpression":
+        return shellValue(node.expression);
+      case "CallExpression": {
+        if (node.optional || node.callee.type !== "Identifier")
+          throw new Error("Only literal Mongo BSON constructors are supported");
+        const constructor = node.callee.name;
+        if (constructor === "ISODate") return shellDate(node, "ISODate");
+        if (constructor === "ObjectId") {
+          const value = shellStringArgument(node, constructor);
+          if (!/^[\da-fA-F]{24}$/.test(value))
+            throw new Error("ObjectId requires 24 hexadecimal characters");
+          return { $oid: value };
+        }
+        if (["Int32", "NumberInt"].includes(constructor)) {
+          const value = shellStringArgument(node, constructor);
+          csvValue(value, "int32");
+          return { $numberInt: value };
+        }
+        if (["Long", "NumberLong"].includes(constructor)) {
+          const value = shellStringArgument(node, constructor);
+          csvValue(value, "int64");
+          return { $numberLong: value };
+        }
+        if (constructor === "Double") {
+          const value = shellStringArgument(node, constructor);
+          if (
+            !/^(?:NaN|Infinity|-Infinity|-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$/.test(
+              value,
+            )
+          )
+            throw new Error("Double requires a valid numeric string");
+          return { $numberDouble: value };
+        }
+        if (["Decimal128", "NumberDecimal"].includes(constructor)) {
+          const value = shellStringArgument(node, constructor);
+          Decimal128.fromString(value);
+          return { $numberDecimal: value };
+        }
+        throw new Error(`Unsupported Mongo BSON constructor: ${constructor}`);
       }
-      if (["Decimal128", "NumberDecimal"].includes(constructor)) {
-        const value = shellStringArgument(node, constructor);
-        Decimal128.fromString(value);
-        return { $numberDecimal: value };
-      }
-      throw new Error(`Unsupported Mongo BSON constructor: ${constructor}`);
-    }
-    case "NewExpression":
-      if (node.callee.type === "Identifier" && node.callee.name === "Date")
-        return shellDate(node, "Date");
-      throw new Error(
-        "Only Date with a literal ISO date or timestamp is supported",
-      );
+      case "NewExpression":
+        if (node.callee.type === "Identifier" && node.callee.name === "Date")
+          return shellDate(node, "Date");
+        throw new Error(
+          "Only Date with a literal ISO date or timestamp is supported",
+        );
       default:
         throw new Error(`Unsupported Mongo shell expression: ${node.type}`);
     }
@@ -216,7 +352,11 @@ function shellValue(node: any): any {
 }
 function parseDocument(text: string): unknown {
   try {
-    return JSON.parse(text);
+    return JSON.parse(text, (_key, value, context?: { source?: string }) =>
+      typeof value === "number"
+        ? new ParsedNumber(context?.source ?? String(value))
+        : value,
+    );
   } catch (jsonError) {
     try {
       return shellValue(parseExpression(text, { sourceType: "module" }));
@@ -232,8 +372,9 @@ function parseDocument(text: string): unknown {
     }
   }
 }
-export function decode(text: string): any {
-  const raw = parseDocument(text);
+export function decode(text: string, original?: unknown): any {
+  // Numeric tokens stay as text until their original BSON type is known.
+  const raw = restoreNumbers(parseDocument(text), original);
   validateExtendedJson(raw);
   return EJSON.deserialize(raw as any, { relaxed: false });
 }
@@ -247,8 +388,10 @@ function canonicalize(value: any): any {
   );
 }
 export function sameDocument(left: unknown, right: unknown): boolean {
-  return JSON.stringify(canonicalize(JSON.parse(encode(left)))) ===
-    JSON.stringify(canonicalize(JSON.parse(encode(right))));
+  return (
+    JSON.stringify(canonicalize(JSON.parse(encode(left)))) ===
+    JSON.stringify(canonicalize(JSON.parse(encode(right))))
+  );
 }
 export function validateExtendedJson(raw: unknown) {
   const visit = (v: any) => {
@@ -263,8 +406,8 @@ export function validateExtendedJson(raw: unknown) {
   };
   visit(raw);
 }
-export function object(text: string): Record<string, any> {
-  const value = decode(text);
+export function object(text: string, original?: unknown): Record<string, any> {
+  const value = decode(text, original);
   if (
     !value ||
     typeof value !== "object" ||
