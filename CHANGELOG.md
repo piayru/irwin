@@ -4,7 +4,25 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.2 — 2026-10-05
+
+### Improvements
+
+- Improved query toolbar actions, keyboard selection of operator suggestions, narrow-window layouts, and the resizable AI assistant dock.
+- Added an independent model-service settings dialog with explicit save and discard behavior.
+- Made JSON viewing and editing display ordinary numbers, retaining ObjectId and date constructors and support for explicit Extended JSON.
 - Added a Local environment tag for local database connections, including connection badges and operation-receipt filtering.
+- Improved connection settings and URI export to reflect effective topology, TLS, timeouts, write concern, and retryable-write overrides; Cosmos DB disables retryable writes by default.
+
+### Fixes
+
+- Preserved BSON numeric types and exact values during document and nested-field editing, including structural array edits; ambiguous array edits now require explicit Extended JSON instead of silently guessing a type.
+- Kept conflict refresh and retry scoped to the edited field, and added line/column navigation for document parsing errors.
+- Hardened update metadata verification and restart behavior while operations or unsaved edits are active. Unsigned macOS packages continue to use manual updates; verified signed macOS builds have a separate opt-in update path.
+
+### Security
+
+- Updated transitive `basic-ftp` to 6.2.1 to address GHSA-c475-qrg2-pj4r without disabling dependency audits.
 
 ## 0.1.1 — 2026-09-30
 
