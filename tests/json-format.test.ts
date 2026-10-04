@@ -113,6 +113,65 @@ describe("JSON document formatting", () => {
       );
   });
 
+  it.each([
+    ["[2.0]", '[{"$numberDouble":"2.0"}]'],
+    ["[2.0, 1]", '[{"$numberDouble":"2.0"},{"$numberInt":"1"}]'],
+    [
+      "[0, 1, 2.0]",
+      '[{"$numberInt":"0"},{"$numberInt":"1"},{"$numberDouble":"2.0"}]',
+    ],
+  ])(
+    "preserves the surviving BSON types after structural array edit %s",
+    (text, expected) => {
+      const original = [new Int32(1), new Double(2)];
+      expect(encode(decode(text, original))).toBe(expected);
+    },
+  );
+
+  it("preserves nested numbers and exact decimals when array objects move", () => {
+    const original = [
+      { name: "first", price: new Int32(1) },
+      {
+        name: "second",
+        price: Decimal128.fromString("1.234567890123456789012345678901234"),
+      },
+    ];
+    expect(
+      encode(
+        decode(
+          '[{price: 1.234567890123456789012345678901234, name: "second"}]',
+          original,
+        ),
+      ),
+    ).toBe(
+      '[{"price":{"$numberDecimal":"1.234567890123456789012345678901234"},"name":"second"}]',
+    );
+  });
+
+  it("refuses ambiguous duplicate numeric types after deleting an array element", () => {
+    const original = [new Int32(1), new Double(1)];
+    expect(() => decode("[1]", original)).toThrow(/array.*Extended JSON/i);
+    expect(encode(decode('[{ $numberDouble: "1.0" }]', original))).toBe(
+      '[{"$numberDouble":"1.0"}]',
+    );
+    expect(encode(decode("[1, 1.0]", original))).toBe(
+      '[{"$numberInt":"1"},{"$numberDouble":"1.0"}]',
+    );
+  });
+
+  it("refuses to guess numeric types when an array is shortened and its survivor is changed", () => {
+    expect(() => decode("[2.5]", [new Int32(1), new Double(2)])).toThrow(
+      /array.*Extended JSON/i,
+    );
+  });
+
+  it("matches exact small decimals separately from negative zero in structural arrays", () => {
+    const original = [new Double(-0), Decimal128.fromString("-1E-400")];
+    expect(encode(decode("[-1e-400]", original))).toBe(
+      '[{"$numberDecimal":"-1E-400"}]',
+    );
+  });
+
   it("rejects edits that would overflow or lose precision in the original numeric type", () => {
     const original = decode(
       '{"count":{"$numberInt":"1"},"long":{"$numberLong":"42"},"score":{"$numberDouble":"1.0"}}',

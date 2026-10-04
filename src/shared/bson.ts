@@ -135,15 +135,122 @@ function numericValue(value: ParsedNumber, original: any): any {
   }
 }
 
-function restoreNumbers(value: any, original: any): any {
-  if (value instanceof ParsedNumber) return numericValue(value, original);
-  if (Array.isArray(value))
-    return value.map((item, index) =>
-      restoreNumbers(
-        item,
-        Array.isArray(original) ? original[index] : undefined,
-      ),
+// Match the editor's displayed values without losing numeric precision or relying
+// on object field order. BSON type information remains in the separate reference.
+function displayedIdentity(value: any): string {
+  const numberIdentity = (text: string) => {
+    const identity = numericIdentity(text);
+    return `number:${identity === "0e0" && text.startsWith("-") ? "-0" : identity}`;
+  };
+  if (value instanceof ParsedNumber) return numberIdentity(value.text);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    if (
+      keys.length === 1 &&
+      ["$numberInt", "$numberLong", "$numberDouble", "$numberDecimal"].includes(
+        keys[0],
+      )
+    )
+      return numberIdentity(String(value[keys[0]]));
+    return JSON.stringify(
+      keys.sort().map((key) => [key, displayedIdentity(value[key])]),
     );
+  }
+  if (Array.isArray(value)) return JSON.stringify(value.map(displayedIdentity));
+  return JSON.stringify(value);
+}
+
+function hasPlainNumber(value: any): boolean {
+  return (
+    value instanceof ParsedNumber ||
+    (!!value &&
+      typeof value === "object" &&
+      Object.values(value).some(hasPlainNumber))
+  );
+}
+
+function arrayReferences(value: any[], original: any[], path: string): any[] {
+  const canonical = original.map((item) => JSON.parse(encode(item)));
+  const oldKeys = canonical.map(displayedIdentity);
+  const newKeys = value.map(displayedIdentity);
+  // Unchanged values, including equal numbers of different BSON types, are safe
+  // at their original positions. This also keeps ordinary in-place edits simple.
+  if (
+    value.length === original.length &&
+    newKeys.every((key, i) => key === oldKeys[i])
+  )
+    return original;
+  const candidates = new Map<
+    string,
+    {
+      indices: number[];
+      remaining: Set<number>;
+      next: number;
+      types: Map<string, number>;
+    }
+  >();
+  const typeKeys = canonical.map((item) => JSON.stringify(canonicalize(item)));
+  oldKeys.forEach((key, index) => {
+    const bucket = candidates.get(key) ?? {
+      indices: [],
+      remaining: new Set<number>(),
+      next: 0,
+      types: new Map<string, number>(),
+    };
+    bucket.indices.push(index);
+    bucket.remaining.add(index);
+    bucket.types.set(
+      typeKeys[index],
+      (bucket.types.get(typeKeys[index]) ?? 0) + 1,
+    );
+    candidates.set(key, bucket);
+  });
+  const used = new Set<number>();
+  const ambiguous = new Set<number>();
+  const matches = newKeys.map((key, index) => {
+    const bucket = candidates.get(key);
+    if (!bucket?.remaining.size) return undefined;
+    if (bucket.types.size > 1) ambiguous.add(index);
+    while (!bucket.remaining.has(bucket.indices[bucket.next])) bucket.next++;
+    const match = bucket.remaining.has(index)
+      ? index
+      : bucket.indices[bucket.next];
+    bucket.remaining.delete(match);
+    const count = bucket.types.get(typeKeys[match])! - 1;
+    if (count) bucket.types.set(typeKeys[match], count);
+    else bucket.types.delete(typeKeys[match]);
+    used.add(match);
+    return match;
+  });
+  const structural =
+    value.length !== original.length ||
+    matches.some((match, i) => match !== undefined && match !== i);
+  return value.map((item, index) => {
+    const match = matches[index];
+    if (
+      structural &&
+      hasPlainNumber(item) &&
+      (ambiguous.has(index) ||
+        (match === undefined && used.size < original.length))
+    )
+      throw new Error(
+        `Ambiguous numeric types in array ${path}; use Extended JSON to explicitly specify the affected element's BSON types`,
+      );
+    if (match !== undefined) return original[match];
+    return structural ? undefined : original[index];
+  });
+}
+
+function restoreNumbers(value: any, original: any, path = "$"): any {
+  if (value instanceof ParsedNumber) return numericValue(value, original);
+  if (Array.isArray(value)) {
+    const references = Array.isArray(original)
+      ? arrayReferences(value, original, path)
+      : [];
+    return value.map((item, index) =>
+      restoreNumbers(item, references[index], `${path}[${index}]`),
+    );
+  }
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
@@ -151,6 +258,7 @@ function restoreNumbers(value: any, original: any): any {
       restoreNumbers(
         item,
         original && Object.hasOwn(original, key) ? original[key] : undefined,
+        `${path}.${key}`,
       ),
     ]),
   );

@@ -248,6 +248,83 @@ test("plain JSON field edits preserve nested numeric BSON types and reject overf
   ).toBe(result.row.ejson);
 });
 
+test("structural array edits preserve BSON types through replacement and field updates", async () => {
+  const coll = client.db("workbench_test").collection("numeric_array_edits");
+  const id = new ObjectId();
+  await coll.insertOne({ _id: id, items: [new Int32(1), new Double(2)] });
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "numeric_array_edits",
+  });
+  const original = (await database.run(input)).rows[0].ejson;
+  const replaced = await database.execute("documents.replace", {
+    ...input,
+    original,
+    document: `{ _id: ObjectId("${id.toHexString()}"), items: [2.0, 1] }`,
+  });
+  const reordered = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(reordered!.items.map((item: any) => item._bsontype)).toEqual([
+    "Double",
+    "Int32",
+  ]);
+  const updated = await database.execute("documents.update", {
+    ...input,
+    original: replaced.ejson,
+    field: "items",
+    value: "[2.0]",
+  });
+  const shortened = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(shortened!.items[0]._bsontype).toBe("Double");
+  expect(shortened!.items[0].valueOf()).toBe(2);
+  await expect(
+    database.execute("documents.update", {
+      ...input,
+      original: updated.row.ejson,
+      field: "items",
+      value: "[3.5, 4]",
+    }),
+  ).rejects.toThrow(/array.*Extended JSON/i);
+  expect(
+    (
+      await database.execute("documents.fetch", {
+        ...input,
+        original: updated.row.ejson,
+      })
+    ).ejson,
+  ).toBe(updated.row.ejson);
+});
+
+test("ambiguous array edits never write inferred BSON types", async () => {
+  const coll = client.db("workbench_test").collection("ambiguous_array_edits");
+  const id = new ObjectId();
+  await coll.insertOne({ _id: id, items: [new Int32(1), new Double(1)] });
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "ambiguous_array_edits",
+  });
+  const original = (await database.run(input)).rows[0].ejson;
+  await expect(
+    database.execute("documents.replace", {
+      ...input,
+      original,
+      document: `{ _id: ObjectId("${id.toHexString()}"), items: [1] }`,
+    }),
+  ).rejects.toThrow(/array.*Extended JSON/i);
+  expect(
+    (await database.execute("documents.fetch", { ...input, original })).ejson,
+  ).toBe(original);
+  await database.execute("documents.update", {
+    ...input,
+    original,
+    field: "items",
+    value: '[{ $numberDouble: "1.0" }]',
+  });
+  const stored = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(stored!.items.map((item: any) => item._bsontype)).toEqual(["Double"]);
+});
+
 test("count returns documents matching the current filter", async () => {
   const coll = client.db("workbench_test").collection("count_docs");
   await coll.deleteMany({});

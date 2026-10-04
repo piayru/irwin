@@ -4,6 +4,22 @@ import { profileSchema } from "../src/shared/contracts";
 import { exportMongoUri } from "../src/main/connection-uri";
 
 describe("connection URI export", () => {
+  it.each(["ssl", "SSL", "Ssl", "sSl"])(
+    "normalizes the legacy %s option without duplicate TLS aliases",
+    (key) => {
+      const profile = profileSchema.parse({
+        id: "legacy-tls",
+        name: "Legacy TLS",
+        uri: `mongodb://db.example.test/?${key}=true&appName=KeepMe`,
+      });
+      const uri = new ConnectionString(exportMongoUri(profile, {}, false).uri);
+      expect(uri.searchParams.get("tls")).toBe("true");
+      expect(
+        [...uri.searchParams.keys()].some((key) => key.toLowerCase() === "ssl"),
+      ).toBe(false);
+      expect(uri.searchParams.get("appName")).toBe("KeepMe");
+    },
+  );
   it("applies saved connection settings while preserving unrelated URI options", () => {
     const profile = profileSchema.parse({
       id: "profile-1",

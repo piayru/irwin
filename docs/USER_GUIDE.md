@@ -90,6 +90,8 @@ Shell 執行選取內容，沒有選取時執行整份程式。支援變數、�
 
 JSON 結果、檢視／編輯文件與物件／陣列欄位編輯器使用簡易格式：ObjectId 顯示為 `ObjectId("...")`，日期顯示為 `ISODate("...")`，Int32、Int64、Double、Decimal128 顯示一般數字，不顯示 `Int32(...)` 或 `$numberInt` 等包裝。編輯既有資料時會保留原始 BSON 數字型別；大整數與 Decimal128 依原始文字解析，避免 JavaScript 數值捨入。超出原型別範圍或精度的修改會被拒絕。Extended JSON 仍可貼入，用於匯入或明確更改型別；Binary、Timestamp 等少見型別保留可還原的表示方式。
 
+刪除、插入或重排陣列時，未修改元素的數字型別會隨原值保留，不會套用原位置的型別。若相同數值原本有不同 BSON 型別，或同時變更陣列結構與元素數值而無法確認對應，會拒絕儲存並提示陣列路徑；請用 Extended JSON 明確指定受影響元素的數字型別，例如 `{ "$numberDouble": "2.5" }`，再儲存。
+
 - 點選 cell 後按 Ctrl+C，macOS 使用 Cmd+C。字串複製原文，ObjectId 複製為 `ObjectId("...")`；其他特殊 BSON／物件／陣列使用 Extended JSON 保留型別。
 - 雙擊 scalar cell，在原型別下修改；Enter 送出、Esc 取消，失焦不自動儲存。物件與陣列開啟 JSON 編輯器。
 - `_id`、分區鍵、含點號／特殊運算符的欄名無法直接修改。投影缺少識別鍵、計算型投影與 Shell 結果唯讀。

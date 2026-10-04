@@ -10,6 +10,8 @@ allowBuilds:
   mongodb-client-encryption: false
   mongodb-memory-server: false
 overrides:
+  # GHSA-c475-qrg2-pj4r: mongosh's PAC proxy dependency must use the fixed parser.
+  basic-ftp: 6.2.1
   dompurify: 3.4.16
   uuid: 11.1.1
   # ExcelJS's old ZIP reader pulls in packages without complete license notices.
