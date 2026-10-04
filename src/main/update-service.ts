@@ -6,6 +6,7 @@ export type UpdateStatus = {
     | "available"
     | "downloading"
     | "downloaded"
+    | "installing"
     | "no-release"
     | "error";
   currentVersion: string;
@@ -14,6 +15,7 @@ export type UpdateStatus = {
   releaseNotes?: string;
   delivery?: "automatic" | "manual";
   progress?: number;
+  restartDeferred?: boolean;
   checkedAt?: string;
   message?: string;
 };
@@ -30,6 +32,7 @@ export interface UpdateAdapter {
   allowPrerelease: boolean;
   on(event: string, listener: (...args: any[]) => void): this;
   checkForUpdates(): Promise<unknown>;
+  downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
 }
 
@@ -37,6 +40,9 @@ export interface UpdateServiceOptions {
   currentVersion: string;
   platform: NodeJS.Platform;
   packaged: boolean;
+  macAutoUpdates?: boolean;
+  linuxPackageType?: string;
+  beforeInstall?(): Promise<boolean>;
   fetcher?: typeof fetch;
   updater?: UpdateAdapter;
   onStatus(status: UpdateStatus): void;
@@ -112,7 +118,7 @@ export function shouldAutoCheckForUpdates(enabled: boolean, online: boolean) {
 export class UpdateService {
   private value: UpdateStatus;
   private pendingCheck?: Promise<UpdateStatus>;
-  private silentCheck = false;
+  private pendingInstall?: Promise<void>;
   private readonly updater?: UpdateAdapter;
   private readonly fetcher: typeof fetch;
   private readonly onStatus: (status: UpdateStatus) => void;
@@ -121,13 +127,16 @@ export class UpdateService {
     this.value = { state: "idle", currentVersion: options.currentVersion };
     this.updater =
       options.packaged &&
-      (options.platform === "win32" || options.platform === "linux")
+      (options.platform === "win32" ||
+        (options.platform === "linux" && options.linuxPackageType === "deb") ||
+        (options.platform === "darwin" && options.macAutoUpdates === true))
         ? options.updater
         : undefined;
     this.fetcher = options.fetcher ?? fetch;
     this.onStatus = options.onStatus;
     if (this.updater) {
-      this.updater.autoDownload = true;
+      // Discovery never downloads or quits. Only the explicit Update action does.
+      this.updater.autoDownload = false;
       this.updater.autoInstallOnAppQuit = false;
       this.updater.allowPrerelease = false;
       this.listenForUpdaterEvents();
@@ -140,18 +149,61 @@ export class UpdateService {
 
   check(options: { silent?: boolean } = {}): Promise<UpdateStatus> {
     if (this.pendingCheck) return this.pendingCheck;
-    this.silentCheck = options.silent === true;
-    this.pendingCheck = this.checkRelease(this.silentCheck).finally(() => {
-      this.pendingCheck = undefined;
-      this.silentCheck = false;
-    });
+    // Opening the dialog again must not destroy an in-flight or cached update.
+    if (
+      this.pendingInstall ||
+      ["downloading", "downloaded", "installing"].includes(this.value.state)
+    )
+      return Promise.resolve(this.status);
+    this.pendingCheck = this.checkRelease(options.silent === true).finally(
+      () => {
+        this.pendingCheck = undefined;
+      },
+    );
     return this.pendingCheck;
   }
 
-  async install(): Promise<void> {
-    if (!this.updater || this.value.state !== "downloaded")
-      throw new Error("The update has not been downloaded");
-    this.updater.quitAndInstall(false, true);
+  install(): Promise<void> {
+    if (this.pendingInstall) return this.pendingInstall;
+    if (this.value.state === "installing") return Promise.resolve();
+    this.pendingInstall = this.downloadAndInstall().finally(() => {
+      this.pendingInstall = undefined;
+    });
+    return this.pendingInstall;
+  }
+
+  private async downloadAndInstall(): Promise<void> {
+    if (!this.updater || !this.value.availableVersion)
+      throw new Error("No in-app update is available");
+    try {
+      if (this.pendingCheck) await this.pendingCheck;
+      if (this.value.state !== "downloaded") {
+        // Recheck the native feed on retry. Never download a renderer-supplied URL.
+        await this.updater.checkForUpdates();
+        if (this.value.state !== "available")
+          throw new Error("The update feed is not ready");
+        this.set({
+          ...this.value,
+          state: "downloading",
+          progress: 0,
+          message: undefined,
+          restartDeferred: false,
+        });
+        await this.updater.downloadUpdate();
+        if (this.status.state !== "downloaded")
+          throw new Error("The update download did not complete");
+      }
+      // Work may have started during the download. Fail closed and keep the
+      // verified installer cached until the user explicitly tries again.
+      if (this.options.beforeInstall && !(await this.options.beforeInstall())) {
+        this.set({ ...this.value, state: "downloaded", restartDeferred: true });
+        return;
+      }
+      this.set({ ...this.value, state: "installing", restartDeferred: false });
+      this.updater.quitAndInstall(true, true);
+    } catch {
+      this.updateError();
+    }
   }
 
   static readonly releasePage = releasePage;
@@ -162,6 +214,7 @@ export class UpdateService {
         state: "checking",
         currentVersion: this.options.currentVersion,
       });
+    let discovered = false;
     try {
       const response = await this.fetcher(releaseUrl, {
         headers: {
@@ -187,6 +240,7 @@ export class UpdateService {
           checkedAt: new Date().toISOString(),
         });
       }
+      discovered = true;
       this.set({
         state: "available",
         currentVersion: this.options.currentVersion,
@@ -196,9 +250,12 @@ export class UpdateService {
         delivery: this.updater ? "automatic" : "manual",
         checkedAt: new Date().toISOString(),
       });
+      // Check the metadata now so a missing/broken feed is actionable, even on
+      // startup. autoDownload remains false until the user presses Update.
       if (this.updater) await this.updater.checkForUpdates();
       return this.status;
     } catch {
+      if (discovered) return this.updateError();
       if (silent) return this.status;
       return this.set({
         state: "error",
@@ -211,40 +268,43 @@ export class UpdateService {
 
   private listenForUpdaterEvents() {
     const updater = this.updater!;
-    updater.on("checking-for-update", () => {
-      if (this.silentCheck) return;
-      this.set({
-        ...this.value,
-        state: "checking",
-        currentVersion: this.options.currentVersion,
-      });
-    });
     updater.on(
       "update-available",
-      (info: { version?: string; releaseNotes?: unknown }) =>
+      (info: { version?: string; releaseNotes?: unknown }) => {
+        if (
+          !info.version ||
+          !versionParts(info.version) ||
+          compareVersions(info.version, this.options.currentVersion) <= 0 ||
+          (this.value.availableVersion &&
+            compareVersions(info.version, this.value.availableVersion) < 0)
+        ) {
+          this.updateError();
+          return;
+        }
         this.set({
           ...this.value,
           state: "available",
-          availableVersion: info.version ?? this.value.availableVersion,
+          availableVersion: info.version,
           releaseNotes:
             typeof info.releaseNotes === "string"
               ? info.releaseNotes.slice(0, 12000)
               : this.value.releaseNotes,
           delivery: "automatic",
-        }),
+          message: undefined,
+          progress: undefined,
+        });
+      },
     );
-    updater.on("update-not-available", () =>
-      this.set({
-        state: "current",
-        currentVersion: this.options.currentVersion,
-        checkedAt: new Date().toISOString(),
-      }),
-    );
+    updater.on("update-not-available", () => {
+      // GitHub has a newer release but its native metadata may not be uploaded
+      // yet. Don't erase the known update or strand the UI in a busy state.
+      this.updateError();
+    });
     updater.on("download-progress", (progress: { percent?: number }) => {
+      if (this.value.state !== "downloading") return;
       const percent = Number(progress?.percent);
       this.set({
         ...this.value,
-        state: "downloading",
         progress: Number.isFinite(percent)
           ? Math.max(0, Math.min(100, Math.round(percent)))
           : 0,
@@ -252,7 +312,8 @@ export class UpdateService {
     });
     updater.on(
       "update-downloaded",
-      (info: { version?: string; releaseNotes?: unknown }) =>
+      (info: { version?: string; releaseNotes?: unknown }) => {
+        if (this.value.state !== "downloading") return;
         this.set({
           ...this.value,
           state: "downloaded",
@@ -263,19 +324,20 @@ export class UpdateService {
               : this.value.releaseNotes,
           delivery: "automatic",
           progress: 100,
-        }),
+        });
+      },
     );
-    updater.on("error", () => {
-      if (this.silentCheck) return;
-      this.set({
-        state: "error",
-        currentVersion: this.options.currentVersion,
-        availableVersion: this.value.availableVersion,
-        delivery: this.value.delivery,
-        checkedAt: new Date().toISOString(),
-        message:
-          "The update could not be downloaded. You can get it from GitHub Releases.",
-      });
+    updater.on("error", () => this.updateError());
+  }
+
+  private updateError(): UpdateStatus {
+    return this.set({
+      ...this.value,
+      state: "error",
+      progress: undefined,
+      checkedAt: new Date().toISOString(),
+      message:
+        "The update could not be completed. Retry the update or use GitHub Releases.",
     });
   }
 

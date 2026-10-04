@@ -17,7 +17,7 @@ export const profileSchema = z
     name,
     group: z.string().default(""),
     environment: z
-      .enum(["development", "staging", "production"])
+      .enum(["local", "development", "staging", "production"])
       .default("development"),
     readOnly: z.boolean().optional(),
     provider: z.enum(["mongodb", "cosmos"]).default("mongodb"),
@@ -447,6 +447,10 @@ export const commands = {
   "app.status": z.object({}),
   "updates.check": z.object({}),
   "updates.install": z.object({}),
+  "updates.restartReady": z.object({
+    id: z.string().uuid(),
+    ready: z.boolean(),
+  }),
   "updates.openRelease": z.object({}),
   "clipboard.write": z.object({ text: z.string().max(32 * 1024 * 1024) }),
 } as const;
@@ -486,7 +490,14 @@ export interface JobProgress {
   errorPath?: string;
 }
 export interface AppEvent {
-  type: "job" | "connection" | "shell" | "analysis" | "openJobs" | "update";
+  type:
+    | "job"
+    | "connection"
+    | "shell"
+    | "analysis"
+    | "openJobs"
+    | "update"
+    | "updateRestart";
   data: any;
 }
 export interface WorkbenchApi {
