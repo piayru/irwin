@@ -9,6 +9,7 @@ User-visible changes are recorded here for each public release. Unreleased work 
 ### Fixes
 
 - Accept numeric and string literals in Int32/NumberInt, Long/NumberLong, Double and Decimal128/NumberDecimal constructors, including `new` forms. Preserve exact integer/decimal source values, reject lossy Double conversions and retain constructor error locations.
+- Pin mongosh's indirect proxy-addr dependency to 2.0.8 to address GHSA-jqcg-44mw-7w3h; retain production dependency auditing.
 
 ## 0.1.2 — 2026-10-05
 
