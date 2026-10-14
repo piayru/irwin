@@ -46,6 +46,14 @@ progress, deferred restart, keyboard/input lock and retry; screenshots remain in
 `.runtime/updates-ui/`. It never invokes a real installer and is not a native
 Windows/Linux/macOS update acceptance test.
 
+`node tests/e2e/bson-document-input.mjs` verifies BSON constructor literals in
+the real Add/Edit document editor, including format-before-save, exact numeric
+types in outgoing IPC payloads, date constructors and blocked integer overflow.
+It uses an isolated IPC fixture; `tests/integration.test.ts` separately verifies
+the same numeric constructors persist their BSON types in a temporary MongoDB
+instance and remain usable in queries. Parser boundary and precision cases are
+covered by `tests/bson-constructors.test.ts`.
+
 A ready update restarts automatically only when the update dialog is still open,
 workspace tabs and other editors/dialogs are closed, and background requests/jobs
 are idle. Otherwise it remains downloaded until the user saves/closes work and

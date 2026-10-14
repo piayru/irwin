@@ -118,6 +118,63 @@ test("full document replace succeeds when the original document is unchanged", a
   expect(decode(result.ejson).name).toBe("Grace");
 });
 
+test("numeric shell constructors insert, replace, edit and query exact BSON values", async () => {
+  const target = {
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "literal_constructor_docs",
+  };
+  const source = `{
+    _id:ObjectId("507f1f77bcf86cd799439012"),
+    n:NumberInt(-1),nested:{width:Int32(8)},
+    total:NumberLong(9007199254740993),ratio:Double(1.25),
+    price:NumberDecimal(1.234567890123456789012345678901234),
+    createdAt:new Date(),updatedAt:new Date()
+  }`;
+  await database.execute("documents.insert", { ...target, document: source });
+  const coll = client.db(target.database).collection(target.collection);
+  const id = new ObjectId("507f1f77bcf86cd799439012");
+  const inserted = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(inserted!.n._bsontype).toBe("Int32");
+  expect(inserted!.n.valueOf()).toBe(-1);
+  expect(inserted!.nested.width._bsontype).toBe("Int32");
+  expect(inserted!.total.toString()).toBe("9007199254740993");
+  expect(inserted!.ratio._bsontype).toBe("Double");
+  expect(inserted!.price.toString()).toBe(
+    "1.234567890123456789012345678901234",
+  );
+  expect(inserted!.createdAt).toBeInstanceOf(Date);
+  const replaced = await database.execute("documents.replace", {
+    ...target,
+    original: encode(inserted),
+    document: source.replace("NumberInt(-1)", "new NumberInt(2)"),
+  });
+  const updated = await database.execute("documents.update", {
+    ...target,
+    original: replaced.ejson,
+    field: "nested.width",
+    value: "new Int32(9)",
+  });
+  const saved = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(saved!.n._bsontype).toBe("Int32");
+  expect(saved!.n.valueOf()).toBe(2);
+  expect(saved!.nested.width._bsontype).toBe("Int32");
+  expect(saved!.nested.width.valueOf()).toBe(9);
+  expect(saved!.total._bsontype).toBe("Long");
+  expect(saved!.total.toString()).toBe("9007199254740993");
+  expect(saved!.price._bsontype).toBe("Decimal128");
+  expect(saved!.price.toString()).toBe("1.234567890123456789012345678901234");
+  expect(decode(updated.row.ejson).nested.width.valueOf()).toBe(9);
+  const result = await database.run(
+    querySchema.parse({
+      ...target,
+      filter:
+        "{n:NumberInt(2),total:NumberLong(9007199254740993),ratio:Double(1.25)}",
+    }),
+  );
+  expect(result.rows).toHaveLength(1);
+});
+
 test("refreshes the current server document by its original identity after a conflict", async () => {
   const coll = client.db("workbench_test").collection("refresh_docs");
   const id = new ObjectId();

@@ -342,6 +342,55 @@ function shellStringArgument(node: any, constructor: string): string {
     throw new Error(`${constructor} requires one string literal`);
   return node.arguments[0].value;
 }
+function shellNumberArgument(
+  node: any,
+  constructor: string,
+  integer = false,
+): string {
+  const invalid = () =>
+    new Error(`${constructor} requires one string or numeric literal`);
+  if (node.arguments?.length !== 1) throw invalid();
+  const argument = node.arguments[0];
+  // Preserve quoted inputs and their existing type-specific validation.
+  if (argument.type === "StringLiteral") return argument.value;
+  let value: string;
+  if (argument.type === "NumericLiteral") {
+    value = numericLiteralText(argument);
+  } else if (
+    argument.type === "UnaryExpression" &&
+    ["-", "+"].includes(argument.operator) &&
+    argument.argument.type === "NumericLiteral"
+  ) {
+    value =
+      (argument.operator === "-" ? "-" : "") +
+      numericLiteralText(argument.argument);
+  } else if (
+    !integer &&
+    argument.type === "Identifier" &&
+    ["NaN", "Infinity"].includes(argument.name)
+  ) {
+    value = argument.name;
+  } else if (
+    !integer &&
+    argument.type === "UnaryExpression" &&
+    ["-", "+"].includes(argument.operator) &&
+    argument.argument.type === "Identifier" &&
+    argument.argument.name === "Infinity"
+  ) {
+    value = argument.operator === "-" ? "-Infinity" : "Infinity";
+  } else {
+    throw invalid();
+  }
+  if (integer) {
+    // Normalize literal exponents/decimal zeros using source text, never the
+    // AST's rounded JavaScript number. BSON range checks follow at the caller.
+    const normalized = integerText(value);
+    if (normalized === undefined)
+      throw new Error(`${constructor} requires an integer in range`);
+    return normalized;
+  }
+  return value;
+}
 function shellValue(node: any): any {
   try {
     switch (node.type) {
@@ -402,10 +451,13 @@ function shellValue(node: any): any {
         throw new Error("Only numeric unary operators are supported");
       case "ParenthesizedExpression":
         return shellValue(node.expression);
-      case "CallExpression": {
+      case "CallExpression":
+      case "NewExpression": {
         if (node.optional || node.callee.type !== "Identifier")
           throw new Error("Only literal Mongo BSON constructors are supported");
         const constructor = node.callee.name;
+        if (constructor === "Date" && node.type === "NewExpression")
+          return shellDate(node, "Date");
         if (constructor === "ISODate") return shellDate(node, "ISODate");
         if (constructor === "ObjectId") {
           const value = shellStringArgument(node, constructor);
@@ -414,38 +466,34 @@ function shellValue(node: any): any {
           return { $oid: value };
         }
         if (["Int32", "NumberInt"].includes(constructor)) {
-          const value = shellStringArgument(node, constructor);
+          const value = shellNumberArgument(node, constructor, true);
           csvValue(value, "int32");
           return { $numberInt: value };
         }
         if (["Long", "NumberLong"].includes(constructor)) {
-          const value = shellStringArgument(node, constructor);
+          const value = shellNumberArgument(node, constructor, true);
           csvValue(value, "int64");
           return { $numberLong: value };
         }
         if (constructor === "Double") {
-          const value = shellStringArgument(node, constructor);
+          const value = shellNumberArgument(node, constructor);
           if (
             !/^(?:NaN|Infinity|-Infinity|-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)$/.test(
               value,
             )
           )
-            throw new Error("Double requires a valid numeric string");
-          return { $numberDouble: value };
+            throw new Error(
+              "Double requires a valid numeric literal or string",
+            );
+          return numericValue(new ParsedNumber(value), new Double(0));
         }
         if (["Decimal128", "NumberDecimal"].includes(constructor)) {
-          const value = shellStringArgument(node, constructor);
+          const value = shellNumberArgument(node, constructor);
           Decimal128.fromString(value);
           return { $numberDecimal: value };
         }
         throw new Error(`Unsupported Mongo BSON constructor: ${constructor}`);
       }
-      case "NewExpression":
-        if (node.callee.type === "Identifier" && node.callee.name === "Date")
-          return shellDate(node, "Date");
-        throw new Error(
-          "Only Date with a literal ISO date or timestamp is supported",
-        );
       default:
         throw new Error(`Unsupported Mongo shell expression: ${node.type}`);
     }
