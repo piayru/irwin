@@ -4,6 +4,8 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.3 — 2026-10-14
+
 ### Fixes
 
 - Accept numeric and string literals in Int32/NumberInt, Long/NumberLong, Double and Decimal128/NumberDecimal constructors, including `new` forms. Preserve exact integer/decimal source values, reject lossy Double conversions and retain constructor error locations.
