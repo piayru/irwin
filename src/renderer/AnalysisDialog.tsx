@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { Profile, QueryInput } from "../shared/contracts";
-import { summarizeExplain, type PlanNode } from "../shared/exploration";
+import type { Profile } from "../shared/contracts";
+import type { PlanNode } from "../shared/exploration";
 import { api, Field, message, Modal, useUi } from "./ui";
 import { CodeEditor } from "./Editor";
 import { prettyDocument } from "./json-format";
-import { AIAssistantPanel } from "./AIAssistantPanel";
-import type { PreferenceSection } from "./preferences";
 
 export type AnalysisTarget = {
   connectionId: string;
@@ -505,7 +503,7 @@ export function AnalysisDialog({
     </Modal>
   );
 }
-function PlanTree({ nodes }: { nodes: PlanNode[] }) {
+export function PlanTree({ nodes }: { nodes: PlanNode[] }) {
   return (
     <ul className="explain-tree">
       {nodes.map((node, i) => (
@@ -516,204 +514,5 @@ function PlanTree({ nodes }: { nodes: PlanNode[] }) {
         </li>
       ))}
     </ul>
-  );
-}
-export function ExplainDialog({
-  query,
-  close,
-  profileProvider = "mongodb",
-  onOpenPreferences,
-}: {
-  query: QueryInput;
-  close(): void;
-  profileProvider?: "mongodb" | "cosmos";
-  onOpenPreferences?(section?: PreferenceSection): void;
-}) {
-  const { t, theme, language } = useUi();
-  const [inputs, setInputs] = useState(query);
-  const [runs, setRuns] = useState<any[]>([]),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [raw, setRaw] = useState(false);
-  const [showAiAssistant, setShowAiAssistant] = useState(false);
-  const run = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const data = JSON.parse(await api.request("queries.explain", inputs));
-      setRuns((old) => [
-        ...old.slice(-1),
-        {
-          data,
-          query: inputs,
-          summary: summarizeExplain(data),
-          time: new Date().toISOString(),
-        },
-      ]);
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal
-      wide
-      resizable
-      className={`explain-modal${showAiAssistant ? " has-ai-assistant" : ""}`}
-      title="Explain · executionStats"
-      close={close}
-      footer={
-        <>
-          <button onClick={() => setRaw((v) => !v)}>
-            {raw ? t("圖形檢視", "Visual plan") : "JSON"}
-          </button>
-          {profileProvider === "mongodb" && runs.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowAiAssistant((open) => !open)}
-              aria-expanded={showAiAssistant}
-            >
-              {t("AI 解讀計畫", "Explain with AI")}
-            </button>
-          )}
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() => void run()}
-          >
-            {busy
-              ? t("執行中…", "Running…")
-              : t("執行／再次比較", "Run / compare again")}
-          </button>
-        </>
-      }
-    >
-      <div
-        className={`explain-layout${showAiAssistant ? " with-ai-assistant" : ""}`}
-      >
-        <div className="explain-content">
-          <p className="muted">
-            {t(
-              "會實際執行目前查詢以取得統計，遵守查詢時間上限；保留最近兩次供比較。執行時間受快取與伺服器負載影響。",
-              "Executes the current query within its time limit to collect statistics. Keeps the last two runs for comparison; cache and server load affect timings.",
-            )}
-          </p>
-          <code>
-            {query.database}.{query.collection}
-          </code>
-          <fieldset disabled={busy} className="analysis-options form-grid">
-            <Field label="Filter">
-              <input
-                name="explain-filter"
-                autoComplete="off"
-                value={inputs.filter}
-                onChange={(e) =>
-                  setInputs((old) => ({ ...old, filter: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Sort">
-              <input
-                name="explain-sort"
-                autoComplete="off"
-                value={inputs.sort}
-                onChange={(e) =>
-                  setInputs((old) => ({ ...old, sort: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Projection">
-              <input
-                name="explain-projection"
-                autoComplete="off"
-                value={inputs.projection}
-                onChange={(e) =>
-                  setInputs((old) => ({ ...old, projection: e.target.value }))
-                }
-              />
-            </Field>
-          </fieldset>
-          {error && <div className="error notice">{error}</div>}
-          {raw ? (
-            <CodeEditor
-              theme={theme}
-              readOnly
-              value={JSON.stringify(
-                runs.map((r) => ({
-                  time: r.time,
-                  query: r.query,
-                  plan: r.data,
-                })),
-                null,
-                2,
-              )}
-              height="400px"
-            />
-          ) : (
-            <div className="explain-runs">
-              {runs.map((run, i) => (
-                <section key={i}>
-                  <small>{run.time}</small>
-                  <p className="muted">
-                    <code>
-                      {run.query.filter} · sort {run.query.sort}
-                    </code>
-                  </p>
-                  <div className="analysis-summary">
-                    {[
-                      [t("回傳", "Returned"), run.summary.returned],
-                      [t("掃描文件", "Docs examined"), run.summary.examined],
-                      [t("掃描索引鍵", "Keys examined"), run.summary.keys],
-                      ["ms", run.summary.elapsed],
-                      [
-                        t("掃描／回傳", "Examined / returned"),
-                        run.summary.ratio,
-                      ],
-                    ].map(([label, v]) => (
-                      <span key={label}>
-                        <strong>{v === undefined ? "—" : v}</strong> {label}
-                      </span>
-                    ))}
-                  </div>
-                  {run.summary.collectionScan && (
-                    <p className="warning">
-                      COLLSCAN · {t("集合掃描", "Collection scan")}
-                    </p>
-                  )}
-                  <p>
-                    {t("使用索引", "Indexes used")}:{" "}
-                    {run.summary.indexes.join(", ") || "—"}
-                  </p>
-                  <PlanTree nodes={run.summary.tree} />
-                </section>
-              ))}
-            </div>
-          )}
-        </div>
-        {showAiAssistant && runs.length > 0 && (
-          <AIAssistantPanel
-            key={`${query.connectionId}/${query.database}/${query.collection}/explain`}
-            connectionId={query.connectionId}
-            database={query.database}
-            collection={query.collection}
-            task="explain"
-            language={language}
-            profileProvider={profileProvider}
-            collectionNames={[]}
-            fieldHints={[]}
-            currentQuery={{
-              filter: runs.at(-1).query.filter,
-              sort: runs.at(-1).query.sort,
-              projection: runs.at(-1).query.projection,
-            }}
-            explainPlan={JSON.stringify(runs.at(-1).data)}
-            embedded
-            onClose={() => setShowAiAssistant(false)}
-            onOpenPreferences={(section) => onOpenPreferences?.(section)}
-          />
-        )}
-      </div>
-    </Modal>
   );
 }

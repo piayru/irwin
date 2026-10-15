@@ -1,0 +1,186 @@
+{
+  "format": "irwin-deployment-acceptance",
+  "version": 1,
+  "capturedAt": "2026-10-05T17:52:47.893Z",
+  "os": "win32",
+  "runId": "c97cfd35-da3b-4c7f-b36a-c696cc0f6ba6",
+  "image": "mongo:8.0",
+  "reports": [
+    {
+      "deployment": "standalone",
+      "serverVersion": "8.0.29",
+      "checks": [
+        {
+          "name": "connect and ping",
+          "status": "passed",
+          "durationMS": 10
+        },
+        {
+          "name": "create disposable BSON fixture and index",
+          "status": "passed",
+          "durationMS": 47
+        },
+        {
+          "name": "find, paging, cancellation and BSON precision",
+          "status": "passed",
+          "durationMS": 24
+        },
+        {
+          "name": "read-only aggregation and preview",
+          "status": "passed",
+          "durationMS": 4
+        },
+        {
+          "name": "reproducible Explain and index metadata",
+          "status": "passed",
+          "durationMS": 8
+        },
+        {
+          "name": "nested output stage blocked",
+          "status": "passed",
+          "durationMS": 1
+        },
+        {
+          "name": "production profile blocks document writes",
+          "status": "passed",
+          "durationMS": 0
+        },
+        {
+          "name": "conditional document update",
+          "status": "passed",
+          "durationMS": 10
+        },
+        {
+          "name": "reconnect after disconnect",
+          "status": "passed",
+          "durationMS": 16
+        }
+      ]
+    },
+    {
+      "deployment": "authentication",
+      "serverVersion": "8.0.29",
+      "checks": [
+        {
+          "name": "connect and ping",
+          "status": "passed",
+          "durationMS": 10
+        },
+        {
+          "name": "create disposable BSON fixture and index",
+          "status": "passed",
+          "durationMS": 35
+        },
+        {
+          "name": "find, paging, cancellation and BSON precision",
+          "status": "passed",
+          "durationMS": 12
+        },
+        {
+          "name": "read-only aggregation and preview",
+          "status": "passed",
+          "durationMS": 3
+        },
+        {
+          "name": "reproducible Explain and index metadata",
+          "status": "passed",
+          "durationMS": 4
+        },
+        {
+          "name": "nested output stage blocked",
+          "status": "passed",
+          "durationMS": 0
+        },
+        {
+          "name": "production profile blocks document writes",
+          "status": "passed",
+          "durationMS": 0
+        },
+        {
+          "name": "conditional document update",
+          "status": "passed",
+          "durationMS": 6
+        },
+        {
+          "name": "reconnect after disconnect",
+          "status": "passed",
+          "durationMS": 20
+        }
+      ]
+    },
+    {
+      "deployment": "replica-set",
+      "serverVersion": "8.0.29",
+      "checks": [
+        {
+          "name": "connect and ping",
+          "status": "passed",
+          "durationMS": 7
+        },
+        {
+          "name": "create disposable BSON fixture and index",
+          "status": "passed",
+          "durationMS": 144
+        },
+        {
+          "name": "find, paging, cancellation and BSON precision",
+          "status": "passed",
+          "durationMS": 12
+        },
+        {
+          "name": "read-only aggregation and preview",
+          "status": "passed",
+          "durationMS": 3
+        },
+        {
+          "name": "reproducible Explain and index metadata",
+          "status": "passed",
+          "durationMS": 5
+        },
+        {
+          "name": "nested output stage blocked",
+          "status": "passed",
+          "durationMS": 0
+        },
+        {
+          "name": "production profile blocks document writes",
+          "status": "passed",
+          "durationMS": 0
+        },
+        {
+          "name": "conditional document update",
+          "status": "passed",
+          "durationMS": 9
+        },
+        {
+          "name": "reconnect after disconnect",
+          "status": "passed",
+          "durationMS": 13
+        }
+      ]
+    }
+  ],
+  "cleanupChecks": [
+    {
+      "name": "cleanup irwin-accept-c97cfd35-da3b-4c7f-b36a-c696cc0f6ba6-standalone",
+      "status": "passed",
+      "durationMS": 0
+    },
+    {
+      "name": "cleanup irwin-accept-c97cfd35-da3b-4c7f-b36a-c696cc0f6ba6-authentication",
+      "status": "passed",
+      "durationMS": 0
+    },
+    {
+      "name": "cleanup irwin-accept-c97cfd35-da3b-4c7f-b36a-c696cc0f6ba6-replica-set",
+      "status": "passed",
+      "durationMS": 0
+    }
+  ],
+  "pending": [
+    "Atlas / external TLS",
+    "Azure Cosmos DB",
+    "native macOS",
+    "native Ubuntu"
+  ]
+}

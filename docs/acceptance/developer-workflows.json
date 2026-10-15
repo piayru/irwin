@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-10-05T18:30:32.224Z",
+  "candidate": "Irwin-0.1.2-win-x64.exe",
+  "checks": [
+    "loaded export: 100 rows and explicit default filename",
+    "all matching export ignores the visible page offset and writes 205 documents",
+    "generated Node.js driver code actually executes and preserves Int64",
+    "Find diagnostics: hint/collation, persisted plans, baseline comparison and JSON round trip",
+    "typed query parameter applies on the active namespace without automatic execution",
+    "whole pipeline import and stage debugging use actual five-input / one-output samples",
+    "Aggregation captures reproducible diagnostics through the same workflow",
+    "team bundle includes Find parameters and pipelines; preview precedes atomic fresh-ID import",
+    "diagnostics and imported query libraries survive a real Electron restart"
+  ],
+  "errors": []
+}

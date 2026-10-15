@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, Sparkles } from "lucide-react";
-import type { Page, Profile, Row } from "../shared/contracts";
+import {
+  querySchema,
+  type Page,
+  type Profile,
+  type Row,
+} from "../shared/contracts";
 import {
   AggregationStageError,
   compileReadOnlyPipeline,
+  importPipeline,
   type AggregationStageDraft,
 } from "../shared/aggregation";
 import { Results } from "./Results";
@@ -16,6 +22,11 @@ import {
 import { Field, Modal } from "./ui";
 import { AIAssistantPanel } from "./AIAssistantPanel";
 import type { PreferenceSection } from "./preferences";
+import { StageDebugDialog } from "./StageDebugDialog";
+import { QueryDeliveryDialog, QueryBundleDialog } from "./QueryDelivery";
+import { ParameterEditor, ResolveParametersDialog } from "./QueryParameters";
+import { resolvePipelineParameters } from "../shared/query-delivery";
+import { ExplainDialog } from "./ExplainDialog";
 
 const templates: Record<string, string> = {
   $match: '{ "$match": { "field": "value" } }',
@@ -26,6 +37,18 @@ const templates: Record<string, string> = {
   $unwind: '{ "$unwind": "$items" }',
   $lookup:
     '{ "$lookup": { "from": "other", "localField": "key", "foreignField": "key", "as": "joined" } }',
+  $unionWith:
+    '{ "$unionWith": { "coll": "other", "pipeline": [{ "$match": {} }] } }',
+  $graphLookup:
+    '{ "$graphLookup": { "from": "other", "startWith": "$parent", "connectFromField": "parent", "connectToField": "_id", "as": "ancestors", "maxDepth": 4 } }',
+  $bucket:
+    '{ "$bucket": { "groupBy": "$value", "boundaries": [0, 10, 100], "default": "other" } }',
+  $setWindowFields:
+    '{ "$setWindowFields": { "sortBy": { "date": 1 }, "output": { "runningTotal": { "$sum": "$value", "window": { "documents": ["unbounded", "current"] } } } } }',
+  $densify:
+    '{ "$densify": { "field": "date", "range": { "step": 1, "unit": "day", "bounds": "full" } } }',
+  $fill:
+    '{ "$fill": { "sortBy": { "date": 1 }, "output": { "value": { "method": "locf" } } } }',
 };
 
 export default function AggregationTab({
@@ -57,6 +80,13 @@ export default function AggregationTab({
   const [scope, setScope] = useState<"preview" | "run">("run");
   const [hasExecuted, setHasExecuted] = useState(false);
   const [explain, setExplain] = useState("");
+  const [diagnostics, setDiagnostics] = useState(false),
+    [showDelivery, setShowDelivery] = useState(false),
+    [showBundle, setShowBundle] = useState(false);
+  const [paste, setPaste] = useState<string>(),
+    [pasteError, setPasteError] = useState(""),
+    [debugIndex, setDebugIndex] = useState<number>(),
+    [parameterPipeline, setParameterPipeline] = useState<SavedPipeline>();
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [saved, setSaved] = useState<SavedPipeline[]>([]);
   const [selectedSavedId, setSelectedSavedId] = useState("");
@@ -80,6 +110,16 @@ export default function AggregationTab({
     return () => {
       live = false;
     };
+  }, []);
+  useEffect(() => {
+    const refresh = () =>
+      void api
+        .request("savedPipelines.list", {})
+        .then(setSaved)
+        .catch((e) => notify(message(e), true));
+    window.addEventListener("irwin:query-library-changed", refresh);
+    return () =>
+      window.removeEventListener("irwin:query-library-changed", refresh);
   }, []);
   useEffect(
     () => () => {
@@ -179,6 +219,7 @@ export default function AggregationTab({
       setHasMore(page.hasMore);
       setHasExecuted(true);
       setElapsed(Math.round(performance.now() - started));
+      notify(t("Pipeline 執行成功", "Pipeline completed"));
       if (!page.hasMore) currentCursor.current = "";
     } catch (cause) {
       if (runGeneration === generation.current) reportError(cause);
@@ -214,9 +255,8 @@ export default function AggregationTab({
   const showExplain = async () => {
     try {
       compileReadOnlyPipeline(stages);
-      setBusy(true);
       setError("");
-      setExplain(await api.request("aggregations.explain", input()));
+      setDiagnostics(true);
     } catch (cause) {
       reportError(cause);
     } finally {
@@ -231,6 +271,7 @@ export default function AggregationTab({
       name: selectedSaved?.name || "",
       group: selectedSaved?.group || "",
       description: selectedSaved?.description || "",
+      parameters: selectedSaved?.parameters || [],
       source: {
         connectionName: tab.connectionName,
         database: tab.database,
@@ -255,8 +296,10 @@ export default function AggregationTab({
       );
       setSelectedSavedId(item.id);
       setSaveForm(undefined);
+      notify(t("Pipeline 已儲存", "Pipeline saved"));
     } catch (cause) {
       setSaveError(message(cause));
+      notify(message(cause), true);
     }
   };
   const deletePipeline = async () => {
@@ -266,6 +309,7 @@ export default function AggregationTab({
       setSaved((old) => old.filter((item) => item.id !== selectedSaved.id));
       setSelectedSavedId("");
       setConfirmDelete(false);
+      notify(t("Pipeline 已刪除", "Pipeline deleted"));
     } catch (cause) {
       notify(message(cause), true);
     }
@@ -279,7 +323,7 @@ export default function AggregationTab({
           "匯出完整 Aggregation 結果",
           "Export complete Aggregation result",
         ),
-        defaultPath: `${tab.collection}-aggregation.jsonl`,
+        defaultPath: `${tab.collection.replace(/[\\/<>:"|?*]/g, "_")}-aggregation-all-matching.jsonl`,
       });
       if (!path) return;
       const job = await api.request("aggregations.export", {
@@ -442,6 +486,9 @@ export default function AggregationTab({
                 >
                   {t("預覽至此", "Preview through here")}
                 </button>
+                <button disabled={busy} onClick={() => setDebugIndex(index)}>
+                  {t("比較輸入／輸出", "Compare input / output")}
+                </button>
               </div>
               <textarea
                 aria-label={`${t("階段內容", "Stage document")} ${index + 1}`}
@@ -491,6 +538,21 @@ export default function AggregationTab({
           onClick={() => void execute("run")}
         >
           {t("執行 Pipeline", "Run pipeline")}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setPaste("");
+            setPasteError("");
+          }}
+        >
+          {t("貼上完整 Pipeline", "Paste whole pipeline")}
+        </button>
+        <button disabled={busy} onClick={() => setShowDelivery(true)}>
+          {t("查詢交付", "Query delivery")}
+        </button>
+        <button disabled={busy} onClick={() => setShowBundle(true)}>
+          {t("團隊查詢包", "Team query bundle")}
         </button>
         <button
           disabled={busy}
@@ -547,12 +609,14 @@ export default function AggregationTab({
               disabled={!selectedSaved || busy}
               onClick={() =>
                 selectedSaved &&
-                updateStages(
-                  selectedSaved.stages.map((stage) => ({
-                    ...stage,
-                    id: crypto.randomUUID(),
-                  })),
-                )
+                (selectedSaved.parameters?.length
+                  ? setParameterPipeline(selectedSaved)
+                  : updateStages(
+                      selectedSaved.stages.map((stage) => ({
+                        ...stage,
+                        id: crypto.randomUUID(),
+                      })),
+                    ))
               }
             >
               {t("套用 Pipeline", "Apply pipeline")}
@@ -700,8 +764,106 @@ export default function AggregationTab({
               }
             />
           </Field>
+          <ParameterEditor
+            value={saveForm.parameters || []}
+            change={(parameters) => setSaveForm({ ...saveForm, parameters })}
+          />
           {saveError && <p role="alert">{saveError}</p>}
         </Modal>
+      )}
+      {paste !== undefined && (
+        <Modal
+          wide
+          resizable
+          title={t("貼上完整 Pipeline", "Paste whole pipeline")}
+          close={() => setPaste(undefined)}
+          footer={
+            <button
+              className="primary"
+              onClick={() => {
+                try {
+                  updateStages(importPipeline(paste));
+                  setPaste(undefined);
+                  notify(t("Pipeline 已載入", "Pipeline loaded"));
+                } catch (e) {
+                  setPasteError(message(e));
+                  notify(message(e), true);
+                }
+              }}
+            >
+              {t("驗證並取代階段", "Validate and replace stages")}
+            </button>
+          }
+        >
+          <p className="muted">
+            {t(
+              "貼上 JSON、Extended JSON 或 Mongo Shell 陣列，例如 [{$match: {active: true}}]。驗證通過才會取代目前階段。",
+              "Paste a JSON, Extended JSON or Mongo Shell array, e.g. [{$match: {active: true}}]. Replaces the current stages only after validation.",
+            )}
+          </p>
+          <textarea
+            aria-label={t("完整 Pipeline", "Whole pipeline")}
+            className="whole-pipeline-input"
+            value={paste}
+            onChange={(e) => setPaste(e.target.value)}
+            rows={14}
+            spellCheck={false}
+          />
+          {pasteError && (
+            <p className="error" role="alert">
+              {pasteError}
+            </p>
+          )}
+        </Modal>
+      )}
+      {debugIndex !== undefined && (
+        <StageDebugDialog
+          input={{ ...input(), batchSize: 100 }}
+          index={debugIndex}
+          close={() => setDebugIndex(undefined)}
+          notify={notify}
+        />
+      )}
+      {showDelivery && (
+        <QueryDeliveryDialog
+          input={{
+            database: tab.database,
+            collection: tab.collection,
+            maxTimeMS: profile?.queryTimeoutMS || 30000,
+            stages,
+          }}
+          close={() => setShowDelivery(false)}
+          notify={notify}
+        />
+      )}
+      {showBundle && (
+        <QueryBundleDialog close={() => setShowBundle(false)} notify={notify} />
+      )}
+      {parameterPipeline && (
+        <ResolveParametersDialog
+          parameters={parameterPipeline.parameters || []}
+          close={() => setParameterPipeline(undefined)}
+          apply={(values) => {
+            updateStages(
+              resolvePipelineParameters(
+                parameterPipeline.stages,
+                parameterPipeline.parameters || [],
+                values,
+              ).map((stage) => ({ ...stage, id: crypto.randomUUID() })),
+            );
+            setParameterPipeline(undefined);
+          }}
+        />
+      )}
+      {diagnostics && (
+        <ExplainDialog
+          query={querySchema.parse({ ...input(), stages: undefined })}
+          aggregation={{ ...input(), batchSize: 100 }}
+          close={() => setDiagnostics(false)}
+          profileProvider={profile?.provider}
+          notify={notify}
+          onOpenPreferences={onOpenPreferences}
+        />
       )}
       {confirmDelete && selectedSaved && (
         <Modal

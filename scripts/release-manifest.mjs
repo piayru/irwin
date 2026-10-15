@@ -66,9 +66,19 @@ for (const file of await readdir(directory)) {
 }
 if (!artifacts.length) throw new Error("No Irwin installer artifacts found");
 artifacts.sort((a, b) => a.file.localeCompare(b.file));
+const sourceStatus = spawnSync(
+  "git",
+  ["status", "--porcelain", "--untracked-files=normal"],
+  {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  },
+);
 const manifest = {
   version: pkg.version,
   commit: commit.toLowerCase(),
+  sourceClean: sourceStatus.status === 0 && sourceStatus.stdout.trim() === "",
   nodeVersion: process.version,
   databaseToolsVersion: tools.version,
   builtAt: new Date().toISOString(),

@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { parametersSchema } from "./query-parameters";
 
 export const savedPipelineSchema = z.object({
   id: z.string().min(1).max(128),
   name: z.string().trim().min(1).max(160),
   group: z.string().trim().max(160).default(""),
   description: z.string().max(2000).default(""),
+  parameters: parametersSchema.optional(),
   source: z
     .object({
       connectionName: z.string().max(255),

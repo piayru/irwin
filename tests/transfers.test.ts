@@ -86,10 +86,15 @@ test("JSON export/import and replace retain BSON and report duplicate keys", asy
   );
   const exported = await job({});
   expect(exported.status).toBe("completed");
+  expect(exported.importTarget).toBeUndefined();
   expect(exported.processed).toBe(201);
   expect((await stat(join(directory, "export.jsonl"))).size).toBeGreaterThan(0);
   const imported = await job({ collection: "copy", direction: "import" });
   expect(imported.status).toBe("completed");
+  expect(imported.importTarget).toEqual({
+    connectionId: "test",
+    database: "transfer_test",
+  });
   expect(imported.processed).toBe(201);
   const duplicate = await job({ collection: "copy", direction: "import" });
   expect(duplicate.failed).toBe(201);

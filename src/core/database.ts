@@ -181,6 +181,10 @@ export class DatabaseService {
         batchSize: input.batchSize,
         maxTimeMS: input.maxTimeMS,
         signal: abort.signal,
+        ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
+        ...(input.collation?.trim()
+          ? { collation: object(input.collation) as any }
+          : {}),
       });
     const cursorId = input.cursorId || randomUUID();
     if (this.cursors.has(cursorId)) throw new Error("Duplicate cursor id");
@@ -203,7 +207,8 @@ export class DatabaseService {
     input: AggregationInput,
     mode: "run" | "preview" = "run",
   ): Promise<Page> {
-    const full = compileReadOnlyPipeline(input.stages);
+    const { client, profile, version } = this.get(input.connectionId);
+    const full = compileReadOnlyPipeline(input.stages, version);
     const pipeline =
       mode === "preview"
         ? [
@@ -212,11 +217,11 @@ export class DatabaseService {
                 0,
                 (input.throughIndex ?? input.stages.length - 1) + 1,
               ),
+              version,
             ),
             { $limit: 20 },
           ]
         : full;
-    const { client, profile } = this.get(input.connectionId);
     assertWritable(
       profile,
       mode === "preview" ? "aggregations.preview" : "aggregations.run",
@@ -232,6 +237,10 @@ export class DatabaseService {
             ? Math.min(input.maxTimeMS, 10000)
             : input.maxTimeMS,
         allowDiskUse: false,
+        ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
+        ...(input.collation?.trim()
+          ? { collation: object(input.collation) as any }
+          : {}),
         signal: abort.signal,
       });
     const cursorId = input.cursorId || randomUUID();
@@ -252,13 +261,20 @@ export class DatabaseService {
     }
   }
   async explainAggregation(input: AggregationInput): Promise<string> {
-    const pipeline = compileReadOnlyPipeline(input.stages);
-    const { client, profile } = this.get(input.connectionId);
+    const { client, profile, version } = this.get(input.connectionId);
+    const pipeline = compileReadOnlyPipeline(input.stages, version);
     assertWritable(profile, "aggregations.explain");
     const cursor = client
       .db(input.database)
       .collection(input.collection)
-      .aggregate(pipeline, { maxTimeMS: input.maxTimeMS, allowDiskUse: false });
+      .aggregate(pipeline, {
+        maxTimeMS: input.maxTimeMS,
+        allowDiskUse: false,
+        ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
+        ...(input.collation?.trim()
+          ? { collation: object(input.collation) as any }
+          : {}),
+      });
     try {
       return encode(await cursor.explain("executionStats"));
     } finally {
@@ -272,6 +288,39 @@ export class DatabaseService {
       .collection(input.collection)
       .countDocuments(object(input.filter), { maxTimeMS: input.maxTimeMS });
     return Number(total);
+  }
+  async captureDiagnostic(
+    kind: "find" | "aggregation",
+    input: QueryInput | AggregationInput,
+  ) {
+    const { client, profile } = this.get(input.connectionId);
+    assertWritable(profile, "diagnostics.capture");
+    const capturedAt = new Date().toISOString(),
+      started = performance.now();
+    const plan =
+      kind === "find"
+        ? await this.execute("queries.explain", input)
+        : await this.explainAggregation(input as AggregationInput);
+    const durationMS = Math.round(performance.now() - started),
+      warnings: string[] = [];
+    let indexes = "[]";
+    try {
+      indexes = encode(
+        await client
+          .db(input.database)
+          .collection(input.collection)
+          .listIndexes({ maxTimeMS: Math.min(input.maxTimeMS, 10000) })
+          .toArray(),
+      );
+    } catch {
+      warnings.push(
+        "Index definitions unavailable (permissions or provider capabilities)",
+      );
+    }
+    const serverVersion = this.get(input.connectionId).version;
+    if (serverVersion === "unknown")
+      warnings.push("Server version unavailable");
+    return { capturedAt, durationMS, plan, indexes, serverVersion, warnings };
   }
   async next(cursorId: string): Promise<Page> {
     const state = this.cursors.get(cursorId);
@@ -361,6 +410,8 @@ export class DatabaseService {
     if (command === "aggregations.run") return this.aggregate(p);
     if (command === "aggregations.preview") return this.aggregate(p, "preview");
     if (command === "aggregations.explain") return this.explainAggregation(p);
+    if (command === "diagnostics.capture")
+      return this.captureDiagnostic(p.kind, p.input);
     if (command === "queries.run") return this.run(p);
     if (command === "queries.count") return this.count(p);
     if (command === "queries.next") return this.next(p.cursorId);
@@ -470,6 +521,11 @@ export class DatabaseService {
               projection: object(p.projection),
               sort: object(p.sort),
               maxTimeMS: p.maxTimeMS,
+              skip: p.skip,
+              ...(p.hint?.trim() ? { hint: object(p.hint) } : {}),
+              ...(p.collation?.trim()
+                ? { collation: object(p.collation) as any }
+                : {}),
             })
             .explain("executionStats"),
         );

@@ -203,6 +203,7 @@ type ResultsProps = {
   theme: Settings["theme"];
   onEdit: (row: number, field: string, value: any) => void;
   onCommit: (row: number, field: string, value: string) => Promise<void>;
+  onEditError?: (error: unknown) => void;
   onSelect: (row: number) => void;
   onRowInspect?: (row: number) => void;
   onRowEdit?: (row: number) => void;
@@ -222,6 +223,7 @@ export function Results({
   theme,
   onEdit,
   onCommit,
+  onEditError,
   onSelect,
   onRowInspect,
   onRowEdit,
@@ -979,6 +981,7 @@ export function Results({
                                     setEditing(undefined);
                                     scroll.current?.focus();
                                   } catch (error) {
+                                    onEditError?.(error);
                                     setEditing({
                                       ...editing,
                                       busy: false,

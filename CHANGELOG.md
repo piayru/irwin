@@ -4,6 +4,34 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+### Improvements
+
+- Add repeatable WSL Docker acceptance for standalone, authenticated and replica-set MongoDB, plus isolated Windows installation/reinstallation/uninstallation checks with JSON evidence.
+- Consolidate result exports into one scope/format picker; name loaded and all-matching files explicitly and label page size as rows per batch.
+- Accept whole BSON-aware pipelines, modern read-only aggregation stages and stage input/output sample comparison with version checks and nested write-stage rejection.
+- Export runnable Node.js/TypeScript and Python driver code; share versioned Find/Shell/pipeline bundles with import previews, fresh identities and typed structural parameters.
+- Persist reproducible Find and Aggregation diagnostics with hint, collation, query inputs, namespace/environment, server version, index definitions and raw executionStats; compare baselines and import/export JSON records.
+- Show query completion and failure in dismissible bottom-right notifications; every notification expires after five seconds.
+- Keep manual Count next to loaded/matching result status, including zero results, persistent retryable errors and stale-response protection when filters change.
+- Defer the local Monaco editor, Excel export library and application dialogs until needed; add production renderer measurements and a static-import bundle budget.
+- Separate document editing, query-count state and update restart coordination from the main workspace components.
+- Add verified draft-release staging with clean-source provenance, combined checksums, required renderer regressions and previous-release Windows upgrade acceptance.
+- Record native desktop acceptance against exact installer hashes with explicit evidence and pending checks; retain unverified platform/service status.
+
+### Fixes
+
+- Keep download retry/fallback and verification progress distinct, reserving 100% for a verified installer instead of replaying the percentage bar.
+- Confirm connection/tab closure before update restart, save Shell drafts before closing tabs, and preserve the workspace on cancellation or draft-save failure.
+
+- Refresh the affected sidebar collection list when an import or restore finishes, including partial writes from cancelled or failed imports. Preserve collapsed databases and ignore stale refresh responses.
+
+- Show release notes when opening an available update and require an explicit download confirmation; retain the notes during download and retries.
+- Keep Windows in-app updates silent and restart automatically, including legacy updater calls that omit `/S`; normal manual installers retain their setup wizard.
+- Make the update dialog resizable and maximizable, and render HTML/Markdown release notes with passive formatting and no executable content or remote resources.
+- Show an indeterminate native installation progress indicator during unattended Windows updates, then restart automatically.
+- Report table-cell save success and failure in a bottom-right notification that disappears after five seconds; keep failed edits for retry without opening Output.
+- Double-clicking an already-open collection creates another independent query tab; the first double-click opens one tab, while single-click and keyboard activation reuse an existing tab.
+
 ## 0.1.3 — 2026-10-14
 
 ### Fixes

@@ -167,6 +167,71 @@ describe("version update checks", () => {
     expect(updater.quitAndInstall).toHaveBeenCalledOnce();
   });
 
+  it("does not replay a percentage bar when a differential download falls back", async () => {
+    const updater = new FakeUpdater();
+    const statuses: UpdateStatus[] = [];
+    updater.downloadUpdate = vi.fn(async () => {
+      for (const percent of [25, 100, 0, 45, 100])
+        updater.emit("download-progress", { percent });
+      updater.emit("update-downloaded", { version: "0.2.0" });
+    });
+    const service = createService({
+      platform: "win32",
+      updater,
+      beforeInstall: async () => false,
+      fetcher: async () => release("0.2.0"),
+      onStatus: (status) => statuses.push(status),
+    });
+    await service.check();
+    await service.install();
+    const downloading = statuses.filter(
+      (status) => status.state === "downloading",
+    );
+    const percentages = downloading.flatMap((status) =>
+      status.progress === undefined ? [] : [status.progress],
+    );
+    expect(percentages).toEqual([0, 25]);
+    expect(downloading).toContainEqual(
+      expect.objectContaining({ downloadPhase: "recovering" }),
+    );
+    expect(downloading).toContainEqual(
+      expect.objectContaining({ downloadPhase: "verifying" }),
+    );
+    expect(service.status).toMatchObject({
+      state: "downloaded",
+      progress: 100,
+    });
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed progress and reserves 100 percent for a verified download", async () => {
+    const updater = new FakeUpdater();
+    const statuses: UpdateStatus[] = [];
+    updater.downloadUpdate = vi.fn(async () => {
+      for (const percent of [40, NaN, Infinity, -5, 99.9, 100])
+        updater.emit("download-progress", { percent });
+      updater.emit("update-downloaded", { version: "0.2.0" });
+    });
+    const service = createService({
+      platform: "win32",
+      updater,
+      beforeInstall: async () => false,
+      fetcher: async () => release("0.2.0"),
+      onStatus: (status) => statuses.push(status),
+    });
+    await service.check();
+    await service.install();
+    const percentages = statuses
+      .filter((s) => s.state === "downloading")
+      .flatMap((s) => (s.progress === undefined ? [] : [s.progress]));
+    expect(percentages).toEqual([0, 40, 99]);
+    expect(service.status).toMatchObject({
+      state: "downloaded",
+      progress: 100,
+    });
+  });
+
   it("deduplicates clicks and protects downloading state from rechecks", async () => {
     const updater = new FakeUpdater();
     let finish!: () => void;

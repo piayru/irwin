@@ -1,10 +1,31 @@
 name: Desktop packages
 on:
   workflow_dispatch:
+    inputs:
+      create_draft:
+        description: Create a verified draft release (run on the version tag)
+        type: boolean
+        default: false
+      previous_tag:
+        description: Previous public version tag for real Windows upgrade acceptance
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
+  release-ref:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the exact version tag for a draft
+        if: inputs.create_draft
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json")); if(process.env.RELEASE_REF!==`refs/tags/v${p.version}`) throw Error("Select the matching version tag when creating a draft"); if(!/^v\d+\.\d+\.\d+$/.test(process.env.PREVIOUS_TAG||"")) throw Error("Provide previous_tag for real installed-version upgrade acceptance");'
   package:
+    needs: release-ref
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +57,13 @@ jobs:
       - run: pnpm package --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - run: pnpm perf:bundle
+      - name: Install isolated renderer test browser
+        if: runner.os == 'Windows'
+        run: pnpm exec playwright install chromium
+      - name: Verify critical query, document and update flows
+        if: runner.os == 'Windows'
+        run: pnpm test:e2e:critical
       - run: pnpm release:verify
         if: runner.os != 'macOS'
       - name: Verify both macOS bundles
@@ -51,9 +79,39 @@ jobs:
         if: runner.os == 'Windows'
         env:
           WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
+      - name: Verify silent Windows update and automatic restart
+        if: runner.os == 'Windows'
+        run: node tests/e2e/updates-native.mjs
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Verify developer workflows in the packaged Windows application
+        if: runner.os == 'Windows'
+        run: pnpm test:e2e:workflows
+        env:
+          WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
+      - name: Verify isolated Windows install, reinstall and uninstall
+        if: runner.os == 'Windows'
+        env:
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: pwsh
+        run: |
+          if ($env:PREVIOUS_TAG) {
+            if ($env:PREVIOUS_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid previous release tag' }
+            gh release download "$env:PREVIOUS_TAG" --pattern 'Irwin-*-win-x64.exe' --pattern 'SHA256SUMS.txt' --dir .runtime/previous-release
+            if ($LASTEXITCODE -ne 0) { throw 'Previous public release download failed' }
+            node --input-type=module -e 'import fs from "node:fs";import crypto from "node:crypto"; const d=".runtime/previous-release/";const f=fs.readdirSync(d).filter(f=>/^Irwin-\d+\.\d+\.\d+-win-x64\.exe$/.test(f));if(f.length!==1)throw Error("Expected one previous installer"); const line=fs.readFileSync(d+"SHA256SUMS.txt","utf8").split(/\r?\n/).find(l=>l.trim().split(/\s+\*?/).at(-1)===f[0]);if(!line||crypto.createHash("sha256").update(fs.readFileSync(d+f[0])).digest("hex")!==line.slice(0,64).toLowerCase())throw Error("Previous installer checksum mismatch");'
+            if ($LASTEXITCODE -ne 0) { throw 'Previous release verification failed' }
+            $previousInstaller = @(Get-ChildItem .runtime/previous-release -Filter 'Irwin-*-win-x64.exe')[0].FullName
+            pnpm accept:installation --previous-installer "$previousInstaller"
+          } else {
+            pnpm accept:installation
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: irwin-unsigned-candidate-${{ matrix.os }}
+          include-hidden-files: true
           if-no-files-found: error
           path: |
             release/Irwin-*.exe
@@ -64,3 +122,66 @@ jobs:
             release/latest*.yml
             release/release-manifest.json
             .runtime/desktop-smoke.json
+            .runtime/developer-workflows.json
+            .runtime/renderer-checks.json
+            .runtime/installation-*/acceptance.json
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: irwin-failed-checks-${{ matrix.os }}
+          include-hidden-files: true
+          path: |
+            .runtime/renderer-checks.json
+            .runtime/renderer-checks/*.log
+  mongo-deployments:
+    needs: release-ref
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: docker pull mongo:8.0
+      - run: pnpm accept:deployments
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: irwin-mongodb-deployment-acceptance
+          include-hidden-files: true
+          path: .runtime/deployment-acceptance/acceptance-*.json
+  draft:
+    if: inputs.create_draft
+    needs: [package, mongo-deployments]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: irwin-unsigned-candidate-*
+          path: .runtime/release-candidates
+      - name: Stage exact verified artifacts and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm release:stage --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
+      - name: Create draft for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" .runtime/release-draft/* --draft --verify-tag --title "Irwin $RELEASE_TAG" --notes-file .runtime/release-draft/release-notes.md

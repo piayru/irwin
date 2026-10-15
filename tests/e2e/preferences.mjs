@@ -136,7 +136,7 @@ try {
         6,
       );
       await section("query-results");
-      await expect(dialog()).toContainText("BATCH");
+      await expect(dialog()).toContainText(/每批載入|rows per batch/);
       await expect(dialog().locator(".modal-footer")).toBeVisible();
       const bounds = await dialog().evaluate((element) => {
         const rect = element.getBoundingClientRect();

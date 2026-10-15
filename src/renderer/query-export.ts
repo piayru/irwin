@@ -1,5 +1,17 @@
 import type { QueryInput, TransferInput } from "../shared/contracts";
 
+export function exportFilename(
+  collection: string,
+  scope: "loaded" | "all-matching",
+  format: "csv" | "excel" | "json" | "jsonl",
+): string {
+  const base = (collection || "query-results").replace(
+    /[\\/<>:"|?*\x00-\x1f]/g,
+    "_",
+  );
+  return `${base}-${scope}.${format === "excel" ? "xlsx" : format}`;
+}
+
 /**
  * Builds a streaming transfer from the current filter without copying the
  * renderer page offset. A visible page can start at row 101, while an

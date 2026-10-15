@@ -4,6 +4,7 @@ import type { CsvColumn, TransferInput, Profile } from "../shared/contracts";
 import { Modal, Field, useUi, api, message } from "./ui";
 import { CsvMapping, CsvPreview } from "./CsvMapping";
 import { requiredTransferConfirmation } from "../shared/operation-safety";
+import { exportFilename } from "./query-export";
 export default function TransferDialog({
   initial,
   close,
@@ -102,7 +103,13 @@ export default function TransferDialog({
         title: t("選擇資料檔案或目錄", "Choose transfer file or directory"),
         defaultPath:
           p.direction === "export"
-            ? `${p.collection || p.database}.${p.format === "bson" ? "archive.gz" : p.format === "json" ? "jsonl" : "csv"}`
+            ? p.collection && p.format !== "bson" && p.limit === 0
+              ? exportFilename(
+                  p.collection,
+                  "all-matching",
+                  p.format === "json" ? "jsonl" : "csv",
+                )
+              : `${(p.collection || p.database).replace(/[\\/<>:"|?*]/g, "_")}${p.limit > 0 ? `-first-${p.limit}` : ""}.${p.format === "bson" ? "archive.gz" : p.format === "json" ? "jsonl" : "csv"}`
             : undefined,
       });
       if (path) {

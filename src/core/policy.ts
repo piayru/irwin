@@ -10,6 +10,7 @@ const readOnlyOperations = new Set([
   "queries.next",
   "queries.cancel",
   "queries.explain",
+  "diagnostics.capture",
   "aggregations.run",
   "aggregations.preview",
   "aggregations.explain",

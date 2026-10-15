@@ -10,14 +10,7 @@ import {
   rm,
   realpath,
 } from "node:fs/promises";
-import {
-  resolve,
-  join,
-  dirname,
-  relative,
-  isAbsolute,
-  win32,
-} from "node:path";
+import { resolve, join, dirname, relative, isAbsolute, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -253,6 +246,10 @@ export class TransferService {
       bytes: 0,
       message: "Starting",
       path: input.path,
+      importTarget:
+        input.direction === "import"
+          ? { connectionId: input.connectionId, database: input.database }
+          : undefined,
     };
     const job: Job = {
       input,
@@ -302,7 +299,10 @@ export class TransferService {
     ).length;
   }
   startAggregation(input: AggregationExportInput) {
-    const pipeline = compileReadOnlyPipeline(input.stages);
+    const pipeline = compileReadOnlyPipeline(
+      input.stages,
+      this.database.get(input.connectionId).version,
+    );
     assertWritable(
       this.database.get(input.connectionId).profile,
       "aggregations.export",

@@ -16,8 +16,42 @@ Before publishing any public release:
 - [ ] Run `node scripts/verify-update-metadata.mjs` on Windows/Linux after packaging. For signed macOS candidates, run the same command with `--platform darwin`; it requires both architectures' ZIP and DMG files in `latest-mac.yml`. For a combined three-platform upload folder, run `node scripts/verify-update-metadata.mjs --directory <folder> --platform all`. These checks require the channel files, the expected package version and exact artifact names, matching byte sizes, and matching base64 SHA-512 values for the actual artifact bytes. Never reuse metadata from a different build.
 - [ ] After publishing, download each supported channel file (`latest.yml`, `latest-linux.yml`, and `latest-mac.yml` for signed macOS), and every artifact it references from that exact GitHub release into a clean folder and rerun validation for each platform from the matching source version. A passing local build does not prove the published feed is complete or unmodified. Keep the Windows `.exe.blockmap` from the same build alongside its installer.
 - [ ] Test an update from the previous installed version. Existing installations that predate the updater need one manual installation of an updater-enabled release.
+- [ ] Run `pnpm perf:bundle` on the production build and all `pnpm test:e2e:critical` checks. Keep their outcomes tied to the exact source commit; both candidates and renderer evidence must come from clean, unchanged source before staging a release.
 - [ ] Confirm unsigned Windows update metadata and installers are built together and uploaded to the project's public GitHub release over HTTPS; explain that checksum validation verifies file integrity but does not establish the publisher's identity.
 - [ ] Confirm unsigned macOS builds stay manual. For signed updater-enabled candidates, follow [AUTO_UPDATES.md](AUTO_UPDATES.md), verify both architecture signatures/notarization and ZIP metadata, and record a real signed-to-signed install/restart smoke test. Existing unsigned installations require a manual signed DMG bootstrap.
+
+## Repeatable draft creation
+
+1. Review and commit changes in focused groups: query/result UX, update behavior,
+   loading performance/module boundaries, then release/acceptance tooling. Move
+   only shipping entries from `Unreleased` into the new version heading, update
+   package/lock versions, and create the matching `v<version>` tag.
+2. Run **Desktop packages** on that tag. Enable `create_draft` and set
+   `previous_tag` to the previous public version. The Windows job downloads its
+   installer and checksum list, verifies its exact SHA-256, and checks upgrade
+   preservation on the isolated runner. Non-release candidate runs may omit
+   `previous_tag`, but then only same-version reinstall is tested.
+3. Package, critical renderer, native installer and disposable MongoDB jobs must
+   succeed before the draft job runs. Staging checks matching versions/commits,
+   clean-source provenance, all target artifacts, exact installer bytes,
+   Windows/Linux updater metadata and required renderer evidence. It creates a
+   combined manifest and `SHA256SUMS.txt`; unsigned Mac updater metadata is not
+   published. Missing or stale evidence fails closed.
+4. Review the draft and complete native/manual checks for the platforms you
+   advertise. The workflow never publishes automatically. Publish the reviewed
+   draft explicitly, then download and revalidate the public update feed as
+   described above.
+
+The equivalent local staging command is:
+
+```sh
+pnpm release:stage --tag v<version> --commit <full-sha> --candidates .runtime/release-candidates --output .runtime/release-draft
+```
+
+The output must be a new directory. It never overwrites an earlier draft or
+publishes to GitHub. Reports under `.runtime/` are explicitly selected in the
+workflow upload paths; `include-hidden-files` is enabled for those paths because
+[upload-artifact excludes hidden files by default](https://github.com/actions/upload-artifact#uploading-hidden-files).
 
 ## Candidate identity
 

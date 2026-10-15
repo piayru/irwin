@@ -302,7 +302,8 @@ export function summarizeExplain(raw: any) {
     raw.executionStats ||
     raw.stages?.find((s: any) => s.$cursor)?.$cursor?.executionStats ||
     {};
-  const returned = numeric(stats.nReturned),
+  const returned =
+      numeric(raw.stages?.at(-1)?.nReturned) ?? numeric(stats.nReturned),
     examined = numeric(stats.totalDocsExamined);
   return {
     returned,

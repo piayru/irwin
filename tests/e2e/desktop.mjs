@@ -249,13 +249,11 @@ try {
   expect(runIconStyle.stroke).not.toBe("transparent");
   expect(runIconStyle.stroke).not.toBe("none");
   checks.push("run icon has visible stroke");
-  await queryActions.locator(".toolbar-more > summary").click();
-  const countButton = queryActions.getByRole("button", {
+  const countButton = page.locator(".result-toolbar").getByRole("button", {
     name: "計算筆數",
     exact: true,
   });
-  await expect(countButton).toHaveAttribute("title", "計算符合條件的文件數");
-  await queryActions.locator(".toolbar-more > summary").press("Escape");
+  await expect(countButton).toBeVisible();
   await page.getByRole("button", { name: "執行", exact: true }).click();
   await expect(
     page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ }),
@@ -531,9 +529,10 @@ try {
         el.previousElementSibling?.previousElementSibling?.className,
     })),
   ).toEqual({ previous: "page-range", beforePrevious: "page-actions" });
-  await queryActions.locator(".toolbar-more > summary").click();
   await countButton.click();
-  await expect(page.locator(".count-result")).toHaveText("符合 3");
+  await expect(page.getByRole("group", { name: "查詢結果狀態" })).toContainText(
+    "符合 3",
+  );
   checks.push("query count");
   checks.push("first and last page controls");
   checks.push("collection query");
@@ -770,9 +769,7 @@ try {
   await app.evaluate(({ dialog }, path) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: path });
   }, queryCsvPath);
-  await page
-    .getByRole("button", { name: "匯出查詢結果 CSV", exact: true })
-    .click();
+  await page.getByRole("button", { name: "匯出結果", exact: true }).click();
   await page.getByRole("button", { name: /已載入.*CSV/ }).click();
   await expect
     .poll(async () => {
@@ -790,9 +787,7 @@ try {
   await app.evaluate(({ dialog }, path) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: path });
   }, queryExcelPath);
-  await page
-    .getByRole("button", { name: "匯出查詢結果 Excel", exact: true })
-    .click();
+  await page.getByRole("button", { name: "匯出結果", exact: true }).click();
   await page.getByRole("button", { name: /已載入.*EXCEL/ }).click();
   await expect
     .poll(async () => {
@@ -810,9 +805,7 @@ try {
   await app.evaluate(({ dialog }, path) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: path });
   }, fullQueryPath);
-  await page
-    .getByRole("button", { name: "匯出查詢結果 CSV", exact: true })
-    .click();
+  await page.getByRole("button", { name: "匯出結果", exact: true }).click();
   await page
     .getByRole("button", { name: /所有符合條件.*Extended JSON/ })
     .click();
@@ -1429,6 +1422,11 @@ try {
     "recoveryCheck",
   );
   await page.getByRole("button", { name: "執行", exact: true }).click();
+  // A fresh Shell utility process can take longer than the storage assertion.
+  // Wait for its execution to finish before checking the resulting draft state.
+  await expect(
+    page.getByRole("button", { name: "執行", exact: true }),
+  ).toBeEnabled({ timeout: 90000 });
   await expect
     .poll(
       async () =>

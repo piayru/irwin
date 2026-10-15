@@ -8,6 +8,7 @@ Run commands from the repository root after completing the development setup in 
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm perf:bundle
 ```
 
 Vitest runs `tests/**/*.test.ts`, including database integration, BSON and CSV round trips, JSON/JSONL parsing after desktop compilation, read-only enforcement, AI context redaction and output validation, connection safety, application state, and release tooling. MongoDB 8.0.18 test binaries are downloaded into the ignored `.runtime/mongodb/` cache when needed. Network access is required for the first download.
@@ -31,6 +32,18 @@ Build first with `pnpm build`, then run the scenario relevant to your change on 
 
 The Windows packaging workflow runs the desktop scenario against its unpacked candidate using `WORKBENCH_EXECUTABLE`. For local source checks, leave that variable unset. Reports and screenshots are written only to ignored `.runtime/` storage. A nonzero exit indicates a failed scenario; review any `unverified` entries before recording acceptance, especially when the native clipboard is unavailable.
 
+`pnpm exec playwright install chromium` followed by `pnpm test:e2e:critical`
+runs the required renderer checks sequentially: release notes/download consent,
+progress and verification, restart confirmation and draft failure, Count state,
+independent collection tabs, import refresh, five-second cell notices and BSON
+constructor document saves. Each
+check has a six-minute deadline, bounded process cleanup and its own log. The
+combined `.runtime/renderer-checks.json` records the product version, source
+commit, whether the source stayed clean and unchanged, and individual outcomes. This is required by draft-release staging; a selected
+single check (`--only query-count`) is useful locally but is insufficient for
+a release. Reports from dirty or changed source remain useful locally but cannot
+be staged for release. These fixtures do not install software or access a live database.
+
 These scenarios do not validate every cloud service, AI provider, operating system, or installation path. Complete [native release acceptance](RELEASE_CHECKLIST.md) using the exact installer to be distributed.
 
 ## Update workflow regression
@@ -46,6 +59,37 @@ progress, deferred restart, keyboard/input lock and retry; screenshots remain in
 `.runtime/updates-ui/`. It never invokes a real installer and is not a native
 Windows/Linux/macOS update acceptance test.
 
+`node tests/e2e/updates-entry.mjs` runs the actual application renderer with an
+isolated IPC fixture in Chromium. It verifies the sidebar entry and release notes,
+closing without downloading, the explicit confirmation button, and retained notes
+during download, in Traditional Chinese and English. Screenshots remain in
+`.runtime/updates-entry/`. Install Playwright's Chromium or set `CHROMIUM_PATH`.
+
+On Windows, `node tests/e2e/updates-native.mjs` builds two real NSIS versions of a
+separate QA application using the production update service and installer settings.
+It uses its own app ID, installation directory, user data, cache, and localhost
+update feed under `.runtime/update-native-*/`; it never installs the production
+Irwin executable. It verifies no download before confirmation, silent replacement,
+automatic restart to the new version, preserved settings, and the legacy updater
+call that omits `/S`. A native window watcher requires a progress indicator and
+fails if installer navigation buttons or a wizard appear. The QA application is
+uninstalled afterward; diagnostics remain local.
+This is also run by the Windows Desktop packages job. It does not verify Linux or
+macOS update installation or Windows system policies that block unsigned apps.
+
+`node tests/e2e/cell-update-notices.mjs` runs the real App/CollectionTab/Results
+renderer with an isolated database IPC fixture. It verifies successful writes
+and rejected writes use five-second notices, do not open Output, and retain failed
+cell edits for retry. No real database is connected. `updates.mjs` also exercises
+drag resizing/maximize/restore and HTML/Markdown notes with hostile scripts,
+event handlers and remote-resource tags.
+
+`node tests/e2e/collection-tabs.mjs` verifies the real sidebar opens exactly one
+tab on the first double-click and another on each subsequent double-click.
+It checks independent filters and query cursors, single-click/keyboard reuse,
+Ctrl/Cmd-click, and the same collection name in a different database. It uses an
+isolated database IPC fixture; no real database is connected.
+
 `node tests/e2e/bson-document-input.mjs` verifies BSON constructor literals in
 the real Add/Edit document editor, including format-before-save, exact numeric
 types in outgoing IPC payloads, date constructors and blocked integer overflow.
@@ -54,12 +98,141 @@ the same numeric constructors persist their BSON types in a temporary MongoDB
 instance and remain usable in queries. Parser boundary and precision cases are
 covered by `tests/bson-constructors.test.ts`.
 
+`node tests/e2e/update-restart-confirmation.mjs` exercises the real App and
+query/Shell editors with isolated IPC. It verifies explicit connection/tab closure
+confirmation, cancellation, background-work blocking, draft-save failure retaining
+tabs, draft preservation, and the final restart handshake after tabs close.
+
 A ready update restarts automatically only when the update dialog is still open,
-workspace tabs and other editors/dialogs are closed, and background requests/jobs
-are idle. Otherwise it remains downloaded until the user saves/closes work and
-explicitly chooses restart. Closing the update dialog during download defers the
+connections and workspace tabs are closed, other editors/dialogs are closed, and
+background requests/jobs are idle. Otherwise it remains downloaded until the user
+explicitly confirms connection/tab closure and restart. Closing the update dialog during download defers the
 restart. Exercise both paths in native acceptance with two different versions.
 See [the updater release contract](AUTO_UPDATES.md) for signing and bootstrap.
+
+## Developer workflow and deployment acceptance
+
+`pnpm test:e2e:workflows` runs the real Electron application with disposable
+MongoDB data and isolated user settings. It checks loaded versus all-matching
+exports, default filenames, BSON-preserving Node.js delivery, Python delivery,
+typed saved-query parameters, whole-pipeline import, stage input/output samples,
+team bundle preview/import, and persistent Explain baselines. Set
+`WORKBENCH_EXECUTABLE` to the unpacked candidate to test the packaged application.
+The receipt is `.runtime/developer-workflows.json`; screenshots and exported
+fixtures remain in `.runtime/workflows-*/`.
+
+`pnpm accept:deployments` creates three disposable Docker deployments: standalone,
+password authentication, and a single-node replica set. On Windows it invokes
+Docker through WSL (`Ubuntu` by default; override `IRWIN_WSL_DISTRO`). Prepare
+the local image before running; the script does not pull it automatically:
+
+```powershell
+wsl -d Ubuntu -- docker pull mongo:8.0
+pnpm accept:deployments
+```
+
+On native Linux, use `docker pull mongo:8.0` before the same pnpm command.
+`IRWIN_TEST_MONGO_IMAGE` can pin a different local image or digest. Each deployment
+checks connection, paging/cancellation, BSON precision, read-only aggregation,
+Explain/index metadata, nested write-stage rejection, production write protection,
+conditional field updates, and reconnect. Cleanup verifies the run label, exact
+container name and ID before removing only its own containers and volumes.
+Sanitized receipts are written to `.runtime/deployment-acceptance/`; URI and
+authentication secrets are excluded.
+
+For an existing Atlas, TLS, or Cosmos account, set `IRWIN_ACCEPTANCE_URI`,
+`IRWIN_ACCEPTANCE_DATABASE`, and `IRWIN_ACCEPTANCE_COLLECTION` locally, then run
+`pnpm accept:external`. Use `IRWIN_ACCEPTANCE_PROVIDER=cosmos` for Cosmos;
+`mongodb` is the default. This scenario reads the selected collection, performs
+bounded read-only queries and diagnostics, and checks application write guards.
+It creates no fixtures and performs no database writes. Missing capabilities or
+permissions appear as failed checks, so inspect the receipt for provider limits.
+It does not validate every cloud configuration, election, or sharded topology.
+
+`pnpm accept:installation` exercises a Windows NSIS artifact (default:
+`release/Irwin-<version>-win-x64.exe`). To select another candidate:
+
+```powershell
+node scripts/accept-installation.mjs --installer .runtime/workflow-release/Irwin-0.1.2-win-x64.exe
+```
+
+It refuses an existing registered Irwin installation, installs into a dedicated
+workspace directory, verifies launch and bundled tools, reinstalls the same
+version and checks saved settings/queries, then verifies its exact registered
+target before uninstalling. Run it separately from other Irwin desktop tests:
+the native installer can close running Irwin processes. The receipt records the
+artifact hash, OS, signing status and individual checks under
+`.runtime/installation-*/acceptance.json`. By default this is not an older-release upgrade,
+downloaded-installer SmartScreen, or clean-machine acceptance test. Native macOS
+and Ubuntu checks remain in the release checklist.
+
+For a real two-version Windows upgrade, run the following on a clean Windows
+profile or disposable VM, with no existing Irwin installation or running Irwin:
+
+```powershell
+pnpm accept:installation --installer release/Irwin-<new-version>-win-x64.exe --previous-installer .runtime/previous-release/Irwin-<old-version>-win-x64.exe
+```
+
+The runner requires a strictly older installer, launches that version, saves
+isolated settings/query markers, installs the candidate, verifies the running
+version and preserved markers, then uninstalls only the verified task-owned
+target. The receipt records both installer hashes. It does not establish the
+in-app download/restart behavior; `updates-native.mjs` covers that path with
+isolated NSIS fixtures, and the real downloaded-release path still needs native
+acceptance.
+
+## Native desktop evidence
+
+After downloading and manually testing an exact installer on the target desktop:
+
+```sh
+pnpm accept:native --artifact /path/to/Irwin-<version>-mac-arm64.dmg --output .runtime/native-acceptance.json
+```
+
+Use the matching `.exe` or `.deb` filename on Windows or Ubuntu. The command
+hashes the artifact and records the host OS/version/architecture. All manual
+checks start **pending**. It does not run an installer or manufacture acceptance.
+To record observed results, supply `--answers <local-file.json>`:
+
+```json
+{
+  "checks": {
+    "install": {
+      "status": "passed",
+      "evidence": "Installed the matching downloaded DMG into Applications; recorded filename and date."
+    },
+    "first-launch": { "status": "pending", "evidence": "" }
+  }
+}
+```
+
+Other check names are `launcher-shortcuts`, `core-database-workflow`,
+`clipboard-file-dialogs`, `credential-storage`, `upgrade-preserves-settings`,
+`uninstall`, and `download-prompts-signing`. macOS additionally requires
+`gatekeeper` and `native-process-architecture`. Missing answers remain pending;
+passes/failures require evidence notes. A different platform/architecture, WSL
+or a detected container cannot earn a passed native report. `recordingCommit`
+identifies the checkout recording the evidence, not the artifact's build commit;
+link its SHA-256 to the release manifest for provenance. Do not include URIs,
+credentials, customer documents or personal data in notes/screenshots.
+
+Use `pnpm accept:external` only with a deliberately selected test namespace and
+read-only credentials for live Cosmos DB/Atlas validation. It can incur read
+costs and does not test writes or claim unsupported provider features work.
+No live cloud or native Mac/Ubuntu acceptance is implied by a successful build.
+
+Recorded results for this implementation are in
+[the six-feature acceptance record](acceptance/2026-10-06-developer-workflows.md).
+
+## Import completion and sidebar refresh
+
+`node tests/e2e/import-collection-refresh.mjs` runs the real sidebar and import
+dialog against an isolated file/database IPC fixture. It covers right-click
+import to a new collection, completion before the start response, disabled
+notifications, duplicate events, collapsed databases, unrelated connections,
+exports, and out-of-order metadata responses from concurrent imports. No real
+database or application data is used by this browser test. The transfer
+integration suite verifies import events identify the actual target database.
 
 ## Optional transfer benchmark
 

@@ -50,7 +50,7 @@ Cosmos RU 在進階設定提供 `DB.Collection` 到分區欄位路徑的對照�
 - 按「管理模型服務」開啟獨立視窗。「儲存模型」會立即儲存該服務；未儲存的模型變更會標示，取消或切換服務前可選擇繼續編輯或捨棄。外層「儲存設定／取消」只處理全域預設與資料傳送等偏好，不會撤銷已儲存的模型服務。
 - 遠端模型的資料傳送同意需在偏好設定啟用一次，並可隨時撤回。自訂端點預設要求 HTTPS；localhost 可用 HTTP。內網 HTTP 需明確開啟，因 API 金鑰與查詢脈絡會以未加密方式傳輸。使用前可在助理側欄檢視本次上下文；文件樣本不會送給模型，提問文字則會依原文傳送。
 
-這些偏好套用於整個工作區。每個分頁自己的檢視方式、查詢區與資料區的排列，以及 BATCH 筆數會繼續由該分頁保存。預設值保留原有行為：開啟 Collection 時自動查詢、舒適列高、長文字截斷、JSON 全部展開。
+這些偏好套用於整個工作區。每個分頁自己的檢視方式、查詢區與資料區的排列，以及 每批載入 筆數會繼續由該分頁保存。預設值保留原有行為：開啟 Collection 時自動查詢、舒適列高、長文字截斷、JSON 全部展開。
 
 每個連線的「進階設定」可設定互動查詢逾時上限，範圍為 5 至 120 秒，預設 30 秒。此上限套用於 Collection 查詢、Aggregation 與 Explain；完整匯出、Shell 與連線逾時各自使用原有設定。
 
@@ -62,7 +62,7 @@ Collection 查詢工具列的「AI 助理」可用繁體中文或英文描述查
 
 Explain 對話只解讀使用者已執行的 MongoDB Explain，不會由模型重跑查詢。模型的數字敘述會檢查是否與計畫中的 metric 一致；每項判讀及建議都需引用存在的 metric 或 stage，效能建議會標示仍需用 Explain 驗證。模型服務與資料庫環境仍需在上市前完成實機品質驗收。
 
-Collection 分頁可輸入 Extended JSON Filter、Sort 與 Projection。查詢不設總筆數 LIMIT；右下角 BATCH 控制每批載入筆數，透過前後批次可逐批檢視全部符合條件的文件。預設每批 100 筆，畫面最多保留最近 1,000 筆或約 24 MB 的結果，較早批次可重新載入；完整匯出使用串流。
+Collection 分頁可輸入 Extended JSON Filter、Sort 與 Projection。查詢不設總筆數 LIMIT；右下角「每批載入」控制每批載入筆數，透過前後批次可逐批檢視全部符合條件的文件。預設每批 100 筆，畫面最多保留最近 1,000 筆或約 24 MB 的結果，較早批次可重新載入；完整匯出使用串流。
 
 查詢工具列的「更多」可開啟 Explain、計算筆數、儲存／開啟查詢，以及切換查詢與結果的排列。收合查詢選項後，已設定的排序／投影會保留摘要；可點擊摘要展開，或按旁邊的 × 清除並重新查詢。左側「連線工作區」可收合以擴大資料區。自由命令模式可反白部分 Shell 程式後按「執行選取內容」，一般「執行」仍會執行整份程式。JSON 檢視器與文件視窗可用每個物件／陣列左側的摺疊控制收合內容。Filter／Sort／Projection 欄位按 Tab 會插入偏好設定指定數量的空格，Ctrl+Tab 可取消一層縮排；Monaco 編輯器也支援 Ctrl+Tab 取消縮排。
 
@@ -106,7 +106,7 @@ JSON 結果、檢視／編輯文件與物件／陣列欄位編輯器使用簡易
 
 ## 匯入與匯出
 
-結果工具列的 CSV／Excel 匯出只包含目前已載入的結果。要輸出完整資料，使用左側 Collection 選單的匯出，並在傳輸對話框確認 Filter／Sort／Projection／Limit。DB 功能表可匯出全部 Collection，每個 Collection 一份檔案，另附 manifest。JSON 文件以 Canonical Extended JSON 保留 ObjectId、Int64、Decimal128、Binary、Date 等型別。
+結果工具列按「匯出結果」後選範圍與格式：已載入資料可輸出 CSV／Excel，預設名稱含 `-loaded`；一般 Collection 查詢可串流輸出所有符合目前 Filter／Sort／Projection 的資料，預設名稱含 `-all-matching`，不套用目前頁面的起始位置。JSON 串流使用 `.jsonl`，每行一份 Canonical Extended JSON，保留 BSON 型別。Shell／自由命令結果僅支援已載入範圍。DB 功能表可匯出全部 Collection，每個 Collection 一份檔案，另附 manifest。
 
 CSV 可指定欄位、型別、空值規則並預覽前 10 筆。未指定映射時，匯出單一 `document` 欄位，存整份 Extended JSON；旁邊的 `.mapping.json` 讓再次匯入時自動還原型別。一般外部 CSV 預設字串，請在開始前調整映射。解析格式錯誤會停止任務；可辨識的單筆型別／重複鍵錯誤會記入錯誤報告，其餘文件繼續。
 

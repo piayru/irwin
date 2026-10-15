@@ -49,12 +49,13 @@ import {
 } from "../shared/contracts";
 import type { UpdateStatus } from "../main/update-service";
 import { UiContext, Modal, Field, api, message } from "./ui";
-import { PreferencesDialog } from "./PreferencesDialog";
-import { UpdateDialog } from "./UpdateDialog";
-import { setUpdateRestartLock } from "./update-restart";
-import ConnectionDialog from "./ConnectionDialog";
+
+import { useUpdateRestart } from "./use-update-restart";
+import { UpdateRestartDialog } from "./UpdateRestartDialog";
+import { DialogLoading } from "./DialogLoading";
+
 import type { ShellDraftChange, WorkspaceTab } from "./CollectionTab";
-import TransferDialog from "./TransferDialog";
+
 import WorkspaceHome from "./WorkspaceHome";
 import { collectionSort } from "./helpers";
 import { filterHistory } from "./history-filter";
@@ -63,7 +64,7 @@ import { diagnoseConnectionError } from "../shared/connection-diagnostics";
 import irwinMangoIcon from "../../build/icon.png";
 import { navigationEntries } from "./navigation";
 import { CommandPalette, type PaletteItem } from "./CommandPalette";
-import { AnalysisDialog, type AnalysisTarget } from "./AnalysisDialog";
+import type { AnalysisTarget } from "./AnalysisDialog";
 import { buildCellFilter } from "../shared/exploration";
 import type { TabState } from "../shared/workspace";
 import {
@@ -72,6 +73,18 @@ import {
   type PreferenceSection,
 } from "./preferences";
 import { jobNotificationKind } from "../shared/job-notifications";
+
+const PreferencesDialog = lazy(() =>
+  import("./PreferencesDialog").then((m) => ({ default: m.PreferencesDialog })),
+);
+const UpdateDialog = lazy(() =>
+  import("./UpdateDialog").then((m) => ({ default: m.UpdateDialog })),
+);
+const ConnectionDialog = lazy(() => import("./ConnectionDialog"));
+const TransferDialog = lazy(() => import("./TransferDialog"));
+const AnalysisDialog = lazy(() =>
+  import("./AnalysisDialog").then((m) => ({ default: m.AnalysisDialog })),
+);
 
 const CollectionTab = lazy(() => import("./CollectionTab"));
 const AggregationTab = lazy(() => import("./AggregationTab"));
@@ -125,6 +138,10 @@ export default function App() {
     [effectiveSettings, resolvedTheme],
   );
   const [connected, setConnected] = useState<string[]>([]);
+  const connectedRef = useRef(connected);
+  connectedRef.current = connected;
+  const refreshedImports = useRef(new Set<string>());
+  const importRefreshVersions = useRef(new Map<string, number>());
   const [connecting, setConnecting] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [dbs, setDbs] = useState<Record<string, string[]>>({});
@@ -132,6 +149,7 @@ export default function App() {
     Record<string, { name: string; type: string }[]>
   >({});
   const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
+  const collectionWasOpenBeforeClick = useRef(false);
   const [active, setActive] = useState("");
   const activeTab = tabs.find((tab) => tab.id === active);
   const [search, setSearch] = useState("");
@@ -159,7 +177,9 @@ export default function App() {
     text: string;
     error: boolean;
     time: number;
+    autoDismiss?: boolean;
   }>();
+  const toastRef = useRef<HTMLDivElement>(null);
   const [secure, setSecure] = useState<boolean>();
   const [admin, setAdmin] = useState<{
     kind: "create" | "drop";
@@ -188,23 +208,22 @@ export default function App() {
     mode: "schema" | "compare";
     target: AnalysisTarget;
   }>();
-  // Workspace tabs are not restored on launch and may contain unsaved query,
-  // document, aggregation or Shell work. Require them to be closed deliberately.
-  const updateRestartReady = useRef(false);
-  updateRestartReady.current =
-    workspaceReady &&
-    showUpdates &&
-    tabs.length === 0 &&
-    !preferences &&
-    !connectionDialog &&
-    !transfer &&
-    !admin &&
-    !usersRolesProfile &&
-    !analysis &&
-    !removingProfile &&
-    !closingShellTab &&
-    jobs.every((job) => job.status !== "running") &&
-    connecting.length === 0;
+  // Tabs are not restored on launch. Only close them after explicit consent;
+  // preserve Shell drafts before allowing the native restart handshake.
+  const updateRestartBlocked =
+    !workspaceReady ||
+    preferences ||
+    Boolean(
+      connectionDialog ||
+      transfer ||
+      admin ||
+      usersRolesProfile ||
+      analysis ||
+      removingProfile ||
+      closingShellTab,
+    ) ||
+    jobs.some((job) => job.status === "running") ||
+    connecting.length > 0;
   const onTabStateChange = useCallback((id: string, state: TabState) => {
     setTabs((old) =>
       old.map((tab) =>
@@ -214,17 +233,35 @@ export default function App() {
       ),
     );
   }, []);
-  const notify = (text: string, error = false) =>
-    setToast({ text, error, time: Date.now() });
+  const notify = (text: string, error = false, autoDismiss = true) =>
+    setToast({ text, error, autoDismiss, time: Date.now() });
   const checkForUpdates = () =>
     void api
       .request("updates.check", {})
       .then(setUpdateStatus)
       .catch((error) => notify(message(error), true));
-  const installUpdate = () =>
-    void api
-      .request("updates.install", {})
-      .catch((error) => notify(message(error), true));
+  const updateRestart = useUpdateRestart({
+    tabs,
+    connected,
+    blocked: updateRestartBlocked,
+    showUpdates,
+    status: updateStatus,
+    shellDirty,
+    shellDraftByTab,
+    t,
+    notify,
+    preserveDrafts: (drafts) =>
+      setShellDrafts((old) => [
+        ...drafts,
+        ...old.filter((item) => !drafts.some((draft) => draft.id === item.id)),
+      ]),
+    closeTabs: () => {
+      setTabs([]);
+      setActive("");
+      setShellDirty({});
+      setShellDraftByTab({});
+    },
+  });
   const openReleasePage = () =>
     void api
       .request("updates.openRelease", {})
@@ -315,24 +352,75 @@ export default function App() {
       if (event.type === "openJobs") setShowJobs(true);
       if (event.type === "update") {
         setUpdateStatus(event.data);
-        // Native macOS staging can take time after quitAndInstall. Keep all
-        // editors inert after a positive handshake, until failure/deferment.
-        if (event.data.state !== "installing") setUpdateRestartLock(false);
+        updateRestart.receiveStatus(event.data);
       }
-      if (event.type === "updateRestart") {
-        const dialogs = [...document.querySelectorAll("dialog[open]")];
-        const ready =
-          updateRestartReady.current &&
-          dialogs.every((dialog) => dialog.classList.contains("update-modal"));
-        if (ready) setUpdateRestartLock(true);
-        void api
-          .request("updates.restartReady", { id: event.data.id, ready })
-          .catch(() => {
-            setUpdateRestartLock(false);
-          });
-      }
+      if (event.type === "updateRestart")
+        updateRestart.restartReady(event.data.id);
     });
   }, []);
+  useEffect(() => {
+    for (const job of jobs) {
+      const target = job.importTarget;
+      if (
+        !target ||
+        job.status === "running" ||
+        refreshedImports.current.has(job.jobId)
+      )
+        continue;
+      // Final jobs can arrive before transferJobs.start returns, and failed or
+      // cancelled imports may still have created collections through partial writes.
+      refreshedImports.current.add(job.jobId);
+      if (refreshedImports.current.size > 100)
+        refreshedImports.current.delete(
+          refreshedImports.current.values().next().value!,
+        );
+      if (!connected.includes(target.connectionId)) continue;
+      const key = `${target.connectionId}/${target.database}`;
+      const version = (importRefreshVersions.current.get(key) ?? 0) + 1;
+      importRefreshVersions.current.set(key, version);
+      void api
+        .request("metadata.collections", target)
+        .then((names) => {
+          if (
+            !connectedRef.current.includes(target.connectionId) ||
+            importRefreshVersions.current.get(key) !== version
+          )
+            return;
+          setCollections((old) => ({
+            ...old,
+            [key]: names,
+          }));
+          // An import can also target a new database typed in the transfer dialog.
+          if (names.length)
+            setDbs((old) => {
+              const existing =
+                old[target.connectionId] ??
+                profiles
+                  .filter((profile) => profile.id === target.connectionId)
+                  .map((profile) => profile.database);
+              return existing.includes(target.database)
+                ? old
+                : {
+                    ...old,
+                    [target.connectionId]: [...existing, target.database],
+                  };
+            });
+        })
+        .catch(() => {
+          if (
+            connectedRef.current.includes(target.connectionId) &&
+            importRefreshVersions.current.get(key) === version
+          )
+            notify(
+              t(
+                "無法自動重新整理匯入目標的集合清單。請手動重新整理。",
+                "The import target's collection list could not refresh. Refresh it manually.",
+              ),
+              true,
+            );
+        });
+    }
+  }, [jobs, connected, profiles]);
   useEffect(() => {
     if (!workspaceReady) return;
     const timer = setTimeout(
@@ -392,8 +480,12 @@ export default function App() {
       .catch((e) => notify(message(e), true));
   }, [effectiveSettings.uiScale]);
   useEffect(() => {
-    if (toast && !toast.error) {
-      const timer = setTimeout(() => setToast(undefined), 5000);
+    if (toast) toastRef.current?.showPopover();
+    if (toast) {
+      const timer = setTimeout(
+        () => setToast((current) => (current === toast ? undefined : current)),
+        5000,
+      );
       return () => clearTimeout(timer);
     }
   }, [toast]);
@@ -1274,7 +1366,29 @@ export default function App() {
                                               >
                                                 <button
                                                   className="tree-main"
+                                                  title={t(
+                                                    "點擊開啟；雙擊另開新分頁",
+                                                    "Click to open; double-click to open another tab",
+                                                  )}
                                                   onClick={(event) => {
+                                                    // A double-click also emits two clicks. Remember
+                                                    // the initial state so first-open creates one tab.
+                                                    if (
+                                                      event.detail > 0 &&
+                                                      event.detail % 2 === 0
+                                                    )
+                                                      return;
+                                                    collectionWasOpenBeforeClick.current =
+                                                      tabs.some(
+                                                        (tab) =>
+                                                          tab.kind ===
+                                                            "collection" &&
+                                                          tab.connectionId ===
+                                                            profile.id &&
+                                                          tab.database === db &&
+                                                          tab.collection ===
+                                                            coll.name,
+                                                      );
                                                     setMenu("");
                                                     openTab(
                                                       profile,
@@ -1288,6 +1402,23 @@ export default function App() {
                                                           event.ctrlKey ||
                                                           event.metaKey,
                                                       },
+                                                    );
+                                                  }}
+                                                  onDoubleClick={(event) => {
+                                                    if (
+                                                      !collectionWasOpenBeforeClick.current ||
+                                                      event.ctrlKey ||
+                                                      event.metaKey
+                                                    )
+                                                      return;
+                                                    openTab(
+                                                      profile,
+                                                      db,
+                                                      coll.name,
+                                                      "collection",
+                                                      undefined,
+                                                      undefined,
+                                                      { newTab: true },
                                                     );
                                                   }}
                                                 >
@@ -1529,7 +1660,9 @@ export default function App() {
               )}
               onClick={() => {
                 setShowUpdates(true);
-                checkForUpdates();
+                // Opening a known release is a review action. Preserve its
+                // notes and wait for the dialog's explicit download button.
+                if (!updateStatus?.availableVersion) checkForUpdates();
               }}
             >
               {updateStatus?.state === "checking" ? (
@@ -2046,6 +2179,7 @@ export default function App() {
                     }
                   >
                     <SavedQueries
+                      notify={notify}
                       revision={savedQueryRevision}
                       target={
                         activeTab && activeTab.kind !== "aggregation"
@@ -2206,6 +2340,8 @@ export default function App() {
         </main>
         {toast && (
           <div
+            ref={toastRef}
+            popover="manual"
             className={`toast ${toast.error ? "error" : "success"}`}
             role="status"
           >
@@ -2266,15 +2402,21 @@ export default function App() {
           </Modal>
         )}
         {connectionDialog && (
-          <ConnectionDialog
-            secure={secure === true}
-            profile={connectionDialog.profile}
-            close={() => setConnectionDialog(undefined)}
-            saved={(profile, connectAfterSave) => {
-              void loadProfiles();
-              if (connectAfterSave) void openConnection(profile, true);
-            }}
-          />
+          <Suspense
+            fallback={
+              <DialogLoading close={() => setConnectionDialog(undefined)} />
+            }
+          >
+            <ConnectionDialog
+              secure={secure === true}
+              profile={connectionDialog.profile}
+              close={() => setConnectionDialog(undefined)}
+              saved={(profile, connectAfterSave) => {
+                void loadProfiles();
+                if (connectAfterSave) void openConnection(profile, true);
+              }}
+            />
+          </Suspense>
         )}
         {closingShellTab && (
           <Modal
@@ -2395,78 +2537,105 @@ export default function App() {
           />
         )}
         {analysis && (
-          <AnalysisDialog
-            mode={analysis.mode}
-            initial={analysis.target}
-            profiles={profiles}
-            close={() => setAnalysis(undefined)}
-            applyFilter={
-              analysis.mode === "schema"
-                ? (field, value, source) => {
-                    const profile = profiles.find(
-                      (p) => p.id === source.connectionId,
-                    );
-                    if (!profile) return;
-                    const id = openTab(
-                      profile,
-                      source.database,
-                      source.collection,
-                      "collection",
-                    );
-                    setTabs((old) =>
-                      old.map((tab) =>
-                        tab.id === id
-                          ? {
-                              ...tab,
-                              requestedFilter: {
-                                value: buildCellFilter(
-                                  "{}",
-                                  field,
-                                  value,
-                                  "only",
-                                ),
-                                id: crypto.randomUUID(),
-                              },
-                            }
-                          : tab,
-                      ),
-                    );
-                  }
-                : undefined
-            }
-          />
+          <Suspense
+            fallback={<DialogLoading close={() => setAnalysis(undefined)} />}
+          >
+            <AnalysisDialog
+              mode={analysis.mode}
+              initial={analysis.target}
+              profiles={profiles}
+              close={() => setAnalysis(undefined)}
+              applyFilter={
+                analysis.mode === "schema"
+                  ? (field, value, source) => {
+                      const profile = profiles.find(
+                        (p) => p.id === source.connectionId,
+                      );
+                      if (!profile) return;
+                      const id = openTab(
+                        profile,
+                        source.database,
+                        source.collection,
+                        "collection",
+                      );
+                      setTabs((old) =>
+                        old.map((tab) =>
+                          tab.id === id
+                            ? {
+                                ...tab,
+                                requestedFilter: {
+                                  value: buildCellFilter(
+                                    "{}",
+                                    field,
+                                    value,
+                                    "only",
+                                  ),
+                                  id: crypto.randomUUID(),
+                                },
+                              }
+                            : tab,
+                        ),
+                      );
+                    }
+                  : undefined
+              }
+            />
+          </Suspense>
         )}
         {preferences && (
-          <PreferencesDialog
-            savedSettings={settings}
-            draft={settingsDraft}
-            initialSection={preferencesSection}
-            onUpdate={setSettingsDraft}
-            onSave={savePreferences}
-            onClose={() => setPreferences(false)}
-          />
+          <Suspense
+            fallback={<DialogLoading close={() => setPreferences(false)} />}
+          >
+            <PreferencesDialog
+              savedSettings={settings}
+              draft={settingsDraft}
+              initialSection={preferencesSection}
+              onUpdate={setSettingsDraft}
+              onSave={savePreferences}
+              onClose={() => setPreferences(false)}
+            />
+          </Suspense>
         )}{" "}
         {showUpdates && (
-          <UpdateDialog
-            currentVersion={applicationVersion || "…"}
-            platform={applicationPlatform}
-            status={updateStatus}
-            onCheck={checkForUpdates}
-            onInstall={installUpdate}
-            onOpenRelease={openReleasePage}
-            onClose={() => setShowUpdates(false)}
+          <Suspense
+            fallback={<DialogLoading close={() => setShowUpdates(false)} />}
+          >
+            <UpdateDialog
+              currentVersion={applicationVersion || "…"}
+              platform={applicationPlatform}
+              status={updateStatus}
+              onCheck={checkForUpdates}
+              onInstall={updateRestart.install}
+              onOpenRelease={openReleasePage}
+              onClose={() => setShowUpdates(false)}
+            />
+          </Suspense>
+        )}
+        {updateRestart.confirm && (
+          <UpdateRestartDialog
+            connections={connected.length}
+            tabs={tabs.length}
+            blocked={updateRestartBlocked}
+            preparing={updateRestart.preparing}
+            error={updateRestart.error}
+            cancel={updateRestart.cancel}
+            install={() => void updateRestart.closeTabsAndInstall()}
           />
         )}
         {transfer && (
-          <TransferDialog
-            initial={transfer}
-            readOnly={
-              profiles.find((profile) => profile.id === transfer.connectionId)
-                ?.readOnly
-            }
-            close={() => setTransfer(undefined)}
-            started={() => setShowJobs(true)}
-          />
+          <Suspense
+            fallback={<DialogLoading close={() => setTransfer(undefined)} />}
+          >
+            <TransferDialog
+              initial={transfer}
+              readOnly={
+                profiles.find((profile) => profile.id === transfer.connectionId)
+                  ?.readOnly
+              }
+              close={() => setTransfer(undefined)}
+              started={() => setShowJobs(true)}
+            />
+          </Suspense>
         )}
         {showReceipts && (
           <Suspense fallback={null}>

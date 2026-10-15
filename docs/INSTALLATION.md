@@ -6,7 +6,11 @@ The Preview release policy is to ship without a paid publisher certificate or Ap
 
 ## Check for and install updates
 
-Click the version number at the bottom of Irwin's sidebar to check GitHub Releases. Packaged Windows and Ubuntu builds download a newer release in the background; Irwin waits for you to choose **Restart and install**. Installing a Linux `.deb` may open a system authentication prompt. Unsigned macOS builds can check for a release and open its download page, but must be updated by downloading the DMG and replacing Irwin in **Applications**. macOS in-app installation requires signed builds, which this Preview does not provide.
+Click the version number at the bottom of Irwin's sidebar to view the available release and its notes. If no release has been discovered yet, Irwin checks GitHub Releases. Opening or closing this dialog does not download an update. Choose **Confirm download and update** to start the download; packaged Windows and Ubuntu builds then install and restart automatically when your work is safely closed. Windows updates install silently, without the regular setup wizard. Installing a Linux `.deb` may open a system authentication prompt. If work is open or running, or you close the update dialog during download, the verified update stays downloaded until you save and close your work and choose **Restart and install**.
+
+Unsigned macOS builds can check for a release and open its download page, but must be updated by downloading the DMG and replacing Irwin in **Applications**. macOS in-app installation requires signed builds, which this Preview does not provide.
+
+An update is initiated by the version you currently have installed. Version 0.1.1 downloads as part of its update check and launches an interactive installer; newer application code cannot change that already-running check. Version 0.1.2 disables automatic downloads and requests silent installation with automatic restart. Newer Windows installers also recognize the legacy updater's `--updated` flag and use silent installation even when that updater omits `/S`. Install a release containing the new confirmation UI once to use the release-notes-first flow for subsequent updates.
 
 The first release that includes the updater cannot update installations that predate this feature. Install that release manually once; later Windows and Ubuntu releases can use in-app updates. Release metadata and the installer it references must be published together in the same public GitHub Release (`latest.yml` for Windows and `latest-linux.yml` for Ubuntu). A local build made with `--publish never` is for validation and does not publish update metadata. See the [release checklist](RELEASE_CHECKLIST.md) before publishing an update.
 
@@ -105,3 +109,28 @@ Local package output is unsigned unless the maintainer configures platform signi
 For a public release with in-app updates, build each supported target with the configured GitHub publisher. The Desktop packages workflow uses `--publish never` and retains installers, blockmaps, and generated `latest*.yml` metadata as workflow artifacts; upload these files together to the matching GitHub Release after verification. Alternatively, `pnpm package --publish always` from a maintainer environment with `GH_TOKEN` set uploads installers and updater metadata directly. Keep the release public and ensure all platform installers and generated metadata refer to the same version. Do not use `--publish always` for local validation.
 
 There is currently no published Homebrew tap, winget manifest, or hosted APT repository. The commands above install a downloaded `.deb` or build from source; do not use guessed package-manager names to install Irwin.
+
+## Repeatable installation and deployment acceptance
+
+On Windows, `pnpm accept:installation` verifies the built NSIS installer in a
+dedicated workspace directory. It first refuses any existing registered Irwin
+installation, checks installed launch and bundled Database Tools, reinstalls the
+same version to check settings/query preservation, then uninstalls its verified
+task-owned target. Specify another artifact with
+`node scripts/accept-installation.mjs --installer <path>`. Run this separately
+from other Irwin processes or desktop tests; the installer can close running
+instances. The JSON receipt includes the exact artifact SHA-256, native OS and
+signature result. It leaves test user data and logs for review.
+
+Same-version reinstallation does not prove upgrade from a prior release.
+Downloaded-file prompts, clean-machine installation, older-release migration,
+and native macOS/Ubuntu acceptance must still be recorded for the exact release
+artifact. See [testing commands](TESTING.md#developer-workflow-and-deployment-acceptance)
+and [the current acceptance record](acceptance/2026-10-06-developer-workflows.md).
+
+`pnpm accept:deployments` validates disposable standalone, authenticated and
+single-node replica-set MongoDB deployments. Windows uses Docker in WSL, as
+configured for this repository. `pnpm accept:external` provides a bounded read-only
+scenario for a separately configured Atlas/TLS/Cosmos account; credentials stay
+in local environment variables and are omitted from the receipt. These database
+checks do not establish native desktop compatibility on WSL's Linux distribution.

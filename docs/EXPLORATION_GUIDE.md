@@ -4,11 +4,11 @@
 
 ## 工作區與鍵盤操作
 
-- Collection 查詢保持 Filter 與「執行」在主區域；按「查詢選項」可收合或展開 Sort 與 Projection。右下角 BATCH 控制每次載入筆數，透過分頁可繼續檢視所有符合條件的文件。
+- Collection 查詢保持 Filter 與「執行」在主區域；按「查詢選項」可收合或展開 Sort 與 Projection。右下角 每批載入 控制每次載入筆數，透過分頁可繼續檢視所有符合條件的文件。
 - 查詢後按「專注結果」可暫時收起編輯器與輸出，將空間留給 Table／Tree／JSON；按「返回查詢」還原。這是目前分頁的畫面選擇，不會清除條件或重新執行。
 - 表格欄名可取得鍵盤焦點，按 Alt+←／→ 在同一凍結群組內移動欄位；在欄位邊界按 ←／→ 調整 16 px，Shift 加方向鍵調整 48 px。欄位設定側欄也列出這些操作提示。
 - Aggregation 可切換「單階段檢視」，以「上一階段／下一階段」逐一編輯；「編輯區高度」調整階段區，窄視窗仍為結果保留空間。階段的上移／下移、停用、複製、刪除均可透過按鈕操作。「已儲存的 Pipeline」與傳輸範本各自收在可展開區域。
-- 查詢不設總筆數 LIMIT；BATCH 是每次載入筆數，分頁可逐批檢視全部符合條件的文件。畫面保留最近 1,000 筆／24 MB 以控制記憶體，亦可回到前批重新載入；完整匯出使用串流。
+- 查詢不設總筆數 LIMIT；每批載入 是每次載入筆數，分頁可逐批檢視全部符合條件的文件。畫面保留最近 1,000 筆／24 MB 以控制記憶體，亦可回到前批重新載入；完整匯出使用串流。
 - 連線設定首頁顯示環境與唯讀狀態，可直接前往進階設定。傳輸視窗先列目標與模式，開始前再次顯示摘要。操作收據與 Schema／比較視窗可調整尺寸，結果列表會延伸使用可用高度；操作收據可依連線／目標文字、狀態、環境與日期篩選，匯出的 JSON 保留結構化原始欄位。
 - 偏好設定的「依照系統切換」會跟隨作業系統的深色／淺色外觀設定；淺色使用芒果暖色主題，深色使用深色主題。移除右上角的快速切換按鈕後，主題統一由偏好設定管理。
 
@@ -22,7 +22,7 @@
 
 儲存 pipeline 時會保存目前階段與停用狀態。套用到其他 Collection 只填入編輯器，不自動執行；其中寫死的 namespace、欄位或 `$lookup.from` 需自行檢查。匯出完整結果建立背景 JSONL 工作，與目前畫面已載入的批次不同；取消或失敗留下 `.partial`，不可當成完整匯出。
 
-Aggregation 執行、預覽、Explain 與匯出都會在前端和資料庫程序檢查 pipeline；`$out`、`$merge`、未知或可能寫入的階段均被拒絕，巢狀 `$lookup.pipeline`／`$facet` 也套用相同限制。最多 50 個階段、1 MB pipeline。本版採保守唯讀設計，尚未提供視覺化欄位連線、拖曳資料流或效能建議。
+Aggregation 執行、預覽、Explain 與匯出都會在前端和資料庫程序檢查 pipeline；`$out`、`$merge`、未知或可能寫入的階段均被拒絕，巢狀 `$lookup.pipeline`／`$unionWith.pipeline`／`$facet` 也套用相同限制。最多 50 個階段、1 MB pipeline。本版採保守唯讀設計，尚未提供視覺化欄位連線、拖曳資料流或效能建議。
 
 ## Production 寫入與操作收據
 
@@ -67,7 +67,27 @@ Aggregation 執行、預覽、Explain 與匯出都會在前端和資料庫程序
 
 按查詢工具列的 Explain，再按「執行／再次比較」。會執行目前查詢取得 executionStats，顯示回傳筆數、掃描文件／索引鍵數、耗時、掃描／回傳比例、COLLSCAN 與使用的索引。
 
-可直接在 Explain 內調整 Filter／Sort／Projection，保留最近兩次結果並排比較；可切換為原始 JSON。關閉對話框即清除這兩次分析。查詢遵守時間上限；服務不支援時顯示原始錯誤，沒有數據時顯示 `—`，不臆測數值。耗時會受快取與伺服器負載影響。
+Explain 保存最近 200 筆本機紀錄；關閉或重開程式後仍可選取「比較基準」。Find 可調整 Filter／Sort／Projection／Skip；Find 與 Aggregation 都可調整 Hint、Collation 與 maxTimeMS。執行後保存完整條件、namespace、連線名稱與環境、伺服器版本、索引定義、原始 executionStats、客戶端耗時及時間戳記，也可命名、匯入、匯出或刪除。套用基準條件只填入目前目標的診斷面板，需再按執行。
+
+基準與本次結果並排顯示；連線／環境／namespace、provider／版本、索引或查詢類型不同時會提示。索引資訊在執行後讀取，並非同一時間點的快照。權限不足時明示索引／版本缺失；沒有數據時顯示 `—`，不臆測數值。匯出含查詢值與伺服器計畫資訊，分享前可切換 JSON 檢查；不匯出連線設定或儲存密碼。耗時受快取、資料變化與負載影響，單次較快不能直接視為索引改善有效。
+
+## 查詢交付與團隊查詢包
+
+Collection「更多 → 查詢交付」與 Aggregation「查詢交付」可產生 Node.js／TypeScript 或 Python／PyMongo 程式碼，複製或儲存為 `.mjs`／`.py`。先安裝畫面列出的 Driver，再設定 `MONGODB_URI` 環境變數；程式保留 BSON 型別、排序與查詢時間上限，以游標讀取全部符合條件的資料。`.mjs` 內容亦可放入 TypeScript 專案。原始 Shell 程式不轉換為 Driver。
+
+「團隊查詢包」可選取 Find／Shell 查詢與 Pipeline，保留名稱、分組、說明和參數。預設省略來源 metadata，可選擇納入連線名稱與 namespace。匯入前顯示逐項可展開的預覽，按「確認匯入」才交易式新增；所有 ID 重新產生，不覆蓋同名或同 ID 項目，不會自動連線或執行。格式為 `irwin-query-bundle` 第 1 版，總大小最多 8 MB，查詢與 Pipeline 各最多 500 項。套用時使用目前分頁的環境；Shell 中寫死的 namespace 需自行檢查。
+
+Find 與 Pipeline 儲存視窗可定義參數，例如 Filter `{_id: {$irwinParam: "owner"}}`，參數名稱 `owner`、型別 `objectId`。套用時填入值，再按「套用條件」；只替換完整 placeholder 物件，不替換字串，不執行 JavaScript。支援 string、int32、int64、double、decimal、boolean、date、objectId 與 BSON-aware json；日期需 ISO 格式並附 `Z` 或 UTC offset。名稱需以英文字母起首，後接字母、數字或底線。查詢包保留實際條件與 Shell 原文，分享前應檢查是否含需移除的資料值。
+
+## 完整 Pipeline 與階段除錯
+
+「貼上完整 Pipeline」接受 JSON、Extended JSON 或 Mongo Shell 文件陣列，全部驗證通過才取代階段；錯誤會標示實際階段編號。新增 `$unionWith`、`$graphLookup`、`$bucket`、`$bucketAuto`、`$geoNear`、`$setWindowFields`、`$densify`、`$fill`、`$search`、`$searchMeta`、`$vectorSearch` 的唯讀語法支援；範本提供常用現代階段。已知伺服器版本低於 `$unionWith` 4.4、`$setWindowFields` 5.0、`$densify` 5.1 或 `$fill` 5.3 時會在執行前指出。版本未知或 Atlas Search／Vector Search 等能力仍由實際服務驗證；不表示所有 provider 都支援。
+
+每個階段的「比較輸入／輸出」分別執行該階段前後的啟用 prefix，各取最多 20 筆、最多 10 秒；用來定位欄位形狀或條件問題，取樣筆數不是全量統計，兩次讀取不是同一時間點的快照。停用階段前後會執行相同 prefix。`$unionWith.pipeline`、`$lookup.pipeline` 與 `$facet` 都遞迴檢查，`$out`／`$merge` 即使藏在巢狀 pipeline 也不能執行。
+
+## 操作通知
+
+右下角的成功與錯誤通知都可按 × 關閉，並於最新通知顯示五秒後自行消失。查詢錯誤仍保留在 Output／相關表單，失敗的文件編輯內容仍可修正後重試。
 
 ## Schema 與資料品質
 

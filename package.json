@@ -22,11 +22,20 @@
     "test": "vitest run",
     "test:integration": "vitest run tests/integration.test.ts",
     "test:e2e:tooltips": "node tests/e2e/tooltips.mjs",
+    "test:e2e:workflows": "node tests/e2e/developer-workflows.mjs",
+    "test:e2e:critical": "node scripts/run-renderer-checks.mjs",
+    "perf:bundle": "node scripts/renderer-budget.mjs",
+    "perf:renderer": "node scripts/measure-renderer.mjs",
+    "accept:deployments": "node scripts/accept-deployments.mjs",
+    "accept:external": "node scripts/accept-external-deployment.mjs",
+    "accept:installation": "node scripts/accept-installation.mjs",
+    "accept:native": "node scripts/native-acceptance.mjs",
     "release:licenses": "node scripts/third-party-notices.mjs",
     "package": "pnpm release:licenses && pnpm build && node scripts/check-tools.mjs && node scripts/package.mjs",
     "package:dir": "pnpm release:licenses && pnpm build && node scripts/check-tools.mjs && node scripts/package.mjs --dir",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:manifest": "node scripts/release-manifest.mjs",
+    "release:stage": "node scripts/stage-release.mjs",
     "release:verify": "node scripts/verify-package.mjs",
     "tools:fetch": "node scripts/fetch-tools.mjs"
   },
@@ -40,9 +49,11 @@
     "bson": "^7.3.2",
     "csv-parse": "^7.0.2",
     "csv-stringify": "^6.8.3",
+    "dompurify": "3.4.16",
     "electron-updater": "6.8.9",
     "exceljs": "4.4.0",
     "lucide-react": "^1.43.0",
+    "marked": "14.0.0",
     "monaco-editor": "^0.56.0",
     "mongodb": "^7.6.0",
     "mongodb-connection-string-url": "^7.0.2",
@@ -103,7 +114,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/nsis-installer.nsh"
     },
     "linux": {
       "artifactName": "Irwin-${version}-linux-${arch}.${ext}",

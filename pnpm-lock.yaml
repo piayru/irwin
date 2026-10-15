@@ -43,6 +43,9 @@ importers:
       csv-stringify:
         specifier: ^6.8.3
         version: 6.8.3
+      dompurify:
+        specifier: 3.4.16
+        version: 3.4.16
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
@@ -52,6 +55,9 @@ importers:
       lucide-react:
         specifier: ^1.43.0
         version: 1.43.0(react@19.2.8)
+      marked:
+        specifier: 14.0.0
+        version: 14.0.0
       monaco-editor:
         specifier: ^0.56.0
         version: 0.56.0

@@ -25,7 +25,7 @@ const bundle = await build({
     window.lockRestart = setUpdateRestartLock;
     window.shortcutCount = 0;
     window.addEventListener('keydown', () => window.shortcutCount++);
-    window.setStatus({state:'available'});
+    window.setStatus({state:'available',releaseNotes:'Fixes and improvements'});
   `,
     resolveDir: process.cwd(),
     loader: "tsx",
@@ -48,13 +48,72 @@ try {
     content: await readFile("src/renderer/styles.css", "utf8"),
   });
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  const dialog = page.locator("dialog.update-modal");
+  await dialog.getByRole("button", { name: "放大視窗", exact: true }).click();
+  assert.ok((await dialog.boundingBox()).width > 1000);
+  await dialog.getByRole("button", { name: "還原視窗", exact: true }).click();
+  assert.equal(
+    await dialog.evaluate((el) => getComputedStyle(el).resize),
+    "both",
+  );
+  const initialBounds = await dialog.boundingBox();
+  await page.mouse.move(
+    initialBounds.x + initialBounds.width - 3,
+    initialBounds.y + initialBounds.height - 3,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    initialBounds.x + initialBounds.width + 70,
+    initialBounds.y + initialBounds.height + 15,
+    { steps: 10 },
+  );
+  await page.mouse.up();
+  assert.ok(
+    (await dialog.boundingBox()).width > initialBounds.width + 40,
+    "Dragging the resize grip must enlarge the dialog",
+  );
+  await page.evaluate(() =>
+    window.setStatus({
+      state: "available",
+      releaseNotes:
+        '<h2>HTML release</h2><p>Readable <strong>improvement</strong></p>\n\n## Markdown heading\n\n- Fixed update\n\n<script>window.compromised=true</script><img src="https://example.invalid/tracker" onerror="window.compromised=true"><iframe src="https://example.invalid"></iframe><a href="javascript:window.compromised=true">Bad link</a><style>body{display:none}</style>',
+    }),
+  );
+  await dialog
+    .locator(".release-notes-content h2")
+    .filter({ hasText: "HTML release" })
+    .waitFor();
+  assert.ok(
+    await dialog
+      .locator("strong")
+      .filter({ hasText: "improvement" })
+      .isVisible(),
+  );
+  assert.ok(
+    await dialog
+      .locator(".release-notes-content h2")
+      .filter({ hasText: "Markdown heading" })
+      .isVisible(),
+  );
+  assert.ok(
+    await dialog.locator("li").filter({ hasText: "Fixed update" }).isVisible(),
+  );
+  assert.equal(
+    await dialog
+      .locator(
+        '.release-notes-content script, .release-notes-content img, .release-notes-content iframe, .release-notes-content style, .release-notes-content [onclick], .release-notes-content [href^="javascript:"]',
+      )
+      .count(),
+    0,
+  );
+  assert.equal(await page.evaluate(() => Boolean(window.compromised)), false);
   await page
-    .getByRole("button", { name: "更新並重新啟動", exact: true })
+    .getByRole("button", { name: "確認下載並更新", exact: true })
     .click();
   assert.deepEqual(await page.evaluate(() => window.actions), ["install"]);
   assert.equal(
     await page.getByRole("button", { name: "開啟 GitHub Releases" }).count(),
-    0,
+    1,
   );
   await page.screenshot({ path: ".runtime/updates-ui/available.png" });
   await page.evaluate(() =>
@@ -69,6 +128,17 @@ try {
     await page.getByRole("button", { name: "檢查更新" }).isDisabled(),
     true,
   );
+  for (const [downloadPhase, text] of [
+    ["recovering", "正在重試下載更新檔…"],
+    ["verifying", "正在驗證更新檔…"],
+  ]) {
+    await page.evaluate((downloadPhase) =>
+      window.setStatus({ state: "downloading", downloadPhase }), downloadPhase);
+    await dialog.getByText(text, { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("progressbar").getAttribute("aria-valuenow"), null);
+    assert.equal(await dialog.getByRole("button", { name: "重新啟動並安裝" }).count(), 0);
+    await page.screenshot({ path: `.runtime/updates-ui/${downloadPhase}.png` });
+  }
   await page.evaluate(() =>
     window.setStatus({ state: "downloaded", restartDeferred: true }),
   );

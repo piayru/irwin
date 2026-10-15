@@ -17,7 +17,6 @@ import {
   Trash2,
   Bookmark,
   FolderOpen,
-  Hash,
   Braces,
   Layers,
   Pencil,
@@ -44,29 +43,26 @@ import type {
   Profile,
   ShellDraft,
 } from "../shared/contracts";
-import { CodeEditor } from "./Editor";
+import { CodeEditor, preloadCodeEditor } from "./Editor";
 import { QueryInput } from "./QueryInput";
+import { useQueryCount } from "./use-query-count";
+import { QueryResultsStatus } from "./QueryResultsStatus";
 import {
   hasQuerySort,
   queryKeyIntent,
   querySortDirections,
 } from "./query-editing";
-import { ExplainDialog } from "./AnalysisDialog";
+import { ExplainDialog } from "./ExplainDialog";
 import { buildCellFilter, fieldCatalog } from "../shared/exploration";
 import { decode, encode, getPath, validPath } from "../shared/bson";
-import { diagnoseConnectionError } from "../shared/connection-diagnostics";
+import { DocumentEditorDialogs, useDocumentEditor } from "./DocumentEditor";
 import type { TabState, TableLayout } from "../shared/workspace";
 import { Results, prettyDocument } from "./Results";
-import {
-  formatDocument,
-  formatEditableDocument,
-  shellJsonLanguage,
-} from "./json-format";
+import { formatDocument, shellJsonLanguage } from "./json-format";
 import { Modal, Field, useUi, api, message } from "./ui";
 import { csvContent, excelContent, shellSessionId } from "./helpers";
-import { allMatchingTransfer } from "./query-export";
-import { documentChanges } from "./document-diff";
-import { documentErrorLocation } from "./document-error";
+import { allMatchingTransfer, exportFilename } from "./query-export";
+import { QueryDeliveryDialog, QueryBundleDialog } from "./QueryDelivery";
 import { queryStateAfterInputChange, type QueryState } from "./query-state";
 import { initialQueryLayout, queryOptionIndicators } from "./query-layout";
 import type { SavedQuery } from "../shared/saved-query";
@@ -118,7 +114,7 @@ export default function CollectionTab({
   transfer(
     p: Partial<TransferInput> & { connectionId: string; database: string },
   ): void;
-  notify(text: string, error?: boolean): void;
+  notify(text: string, error?: boolean, autoDismiss?: boolean): void;
   openIndexes?: string;
   profile?: Profile;
   onShellDraftChange?(tabId: string, change: ShellDraftChange): void;
@@ -130,6 +126,11 @@ export default function CollectionTab({
 }) {
   const { t, theme, language, tabWidth, autoRunOnOpen, jsonExpandedDepth } =
     useUi();
+  useEffect(() => {
+    // Opening a query is explicit editor intent. Warm the module while the
+    // workspace loads so JSON/edit does not pay the entire cold import cost.
+    void preloadCodeEditor().catch(() => {});
+  }, []);
   const readOnly = profile?.readOnly ?? false;
   const [rows, setRows] = useState<Row[]>([]);
   const [view, setView] = useState(tab.state?.view || "table");
@@ -137,6 +138,8 @@ export default function CollectionTab({
   const [busy, setBusy] = useState(false);
   const [queryState, setQueryState] = useState<QueryState>("idle");
   const [savingQuery, setSavingQuery] = useState<SavedQuery>();
+  const [showDelivery, setShowDelivery] = useState(false),
+    [showBundle, setShowBundle] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [output, setOutput] = useState<string[]>([]);
   const [outputHeight, setOutputHeight] = useState(
@@ -206,8 +209,6 @@ export default function CollectionTab({
   };
   const [batchSize, setBatch] = useState(tab.state?.batchSize || 100);
   const [pageIndex, setPageIndex] = useState(0);
-  const [count, setCount] = useState<number>();
-  const [counting, setCounting] = useState(false);
   const defaultCode = `// ${tab.database}\ndb.getCollection(${JSON.stringify(tab.collection || "collection")}).find()`;
   const [code, setCode] = useState(
     tab.state?.code || tab.initialCode || defaultCode,
@@ -281,33 +282,9 @@ export default function CollectionTab({
   const draftBaseline = useRef(tab.initialCode || defaultCode);
   const draftRevision = useRef(0);
   const [exportFormat, setExportFormat] = useState<"csv" | "excel">();
-  const [docEditor, setDocEditor] = useState<{
-    title: string;
-    value: string;
-    originalValue: string;
-    originalEjson?: string;
-    originalValueEjson?: string;
-    numericReferenceEjson?: string;
-    field?: string;
-    submit: (value: string, original?: string) => Promise<any>;
-    readOnly?: boolean;
-  }>();
-  const [docError, setDocError] = useState("");
-  const docEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const docErrorPosition = documentErrorLocation(docError);
-  const docIdentity = useMemo(() => {
-    if (!docEditor?.originalEjson) return "";
-    const id = JSON.parse(docEditor.originalEjson)._id;
-    return id === undefined ? "" : prettyDocument(id, { indent: tabWidth });
-  }, [docEditor?.originalEjson, tabWidth]);
-  const [docBusy, setDocBusy] = useState(false);
-  const [discardDocEditor, setDiscardDocEditor] = useState(false);
-  const [showDocChanges, setShowDocChanges] = useState(false);
-  const [conflictServerDocument, setConflictServerDocument] = useState<{
-    value: string;
-    ejson: string;
-    originalEjson: string;
-  }>();
+  const documentEditor = useDocumentEditor({ tab, profile, notify });
+  const { docEditor, setDocEditor, setDocError, setConflictServerDocument } =
+    documentEditor;
   const [indexes, setIndexes] = useState<string>();
   const [indexKeys, setIndexKeys] = useState('{"field":1}');
   const [indexName, setIndexName] = useState("");
@@ -403,8 +380,11 @@ export default function CollectionTab({
     batchSize,
     maxTimeMS: profile?.queryTimeoutMS ?? 30000,
   };
+  const { count, counting, countError, countDocuments } = useQueryCount(
+    query,
+    tab.kind === "collection" && !freeMode,
+  );
   useEffect(() => {
-    setCount(undefined);
     setPageIndex(0);
     pageIndexRef.current = 0;
     setQueryState((state) => queryStateAfterInputChange(state));
@@ -584,6 +564,7 @@ export default function CollectionTab({
       }
       setElapsed(Math.round(performance.now() - started));
       setQueryState("success");
+      notify(t("查詢執行成功", "Query completed"));
     } catch (e) {
       if (g === generation.current) {
         setQueryState("error");
@@ -682,48 +663,6 @@ export default function CollectionTab({
       readOnly: true,
       submit: async () => {},
     });
-  };
-  const refreshConflictDocument = async () => {
-    if (!docEditor) return;
-    try {
-      const result = await api.request("documents.fetch", {
-        ...target,
-        original: docEditor.originalEjson ?? docEditor.originalValue,
-      });
-      const fieldValue = docEditor.field
-        ? getPath(JSON.parse(result.ejson), docEditor.field)
-        : undefined;
-      if (fieldValue && !fieldValue.exists)
-        throw new Error(
-          t(
-            "資料庫中已沒有此欄位，請重新查詢後編輯。",
-            "This field no longer exists. Refresh the query before editing.",
-          ),
-        );
-      const valueEjson = fieldValue
-        ? JSON.stringify(fieldValue.value)
-        : result.ejson;
-      setConflictServerDocument({
-        value: formatDocument(valueEjson, tabWidth),
-        ejson: valueEjson,
-        originalEjson: result.ejson,
-      });
-    } catch (e) {
-      setDocError(message(e));
-    }
-  };
-  const applyServerDocument = () => {
-    if (!docEditor || !conflictServerDocument) return;
-    setDocEditor({
-      ...docEditor,
-      value: conflictServerDocument.value,
-      originalValue: conflictServerDocument.value,
-      originalEjson: conflictServerDocument.originalEjson,
-      originalValueEjson: conflictServerDocument.ejson,
-      numericReferenceEjson: conflictServerDocument.ejson,
-    });
-    setConflictServerDocument(undefined);
-    setDocError("");
   };
   const editRow = (row: number) => {
     if (!ensureWritable()) return;
@@ -886,7 +825,6 @@ export default function CollectionTab({
         ? old.map((v, i) => (i === row ? res.row : v))
         : old.filter((_, i) => i !== row),
     );
-    setOutput([prettyDocument(JSON.parse(res.update), { indent: tabWidth })]);
     notify(t("已儲存", "Saved"));
   };
   const add = () => {
@@ -972,22 +910,9 @@ export default function CollectionTab({
   const explain = async () => {
     setShowExplain(true);
   };
-  const countDocuments = async () => {
-    if (tab.kind !== "collection" || freeMode || counting) return;
-    setCounting(true);
-    try {
-      const total = await api.request("queries.count", query);
-      setCount(Number(total));
-    } catch (e) {
-      notify(message(e), true);
-    } finally {
-      setCounting(false);
-    }
-  };
   const exportLoadedResults = async (format: "csv" | "excel") => {
     if (!rows.length) return;
     try {
-      const extension = format === "csv" ? "csv" : "xlsx";
       const path = await api.request("files.choose", {
         kind: "save",
         title: t(
@@ -996,7 +921,7 @@ export default function CollectionTab({
             ? "Export query results as CSV"
             : "Export query results as Excel",
         ),
-        defaultPath: `${tab.collection || "query-results"}.${extension}`,
+        defaultPath: exportFilename(tab.collection, "loaded", format),
       });
       if (!path) return;
       const content =
@@ -1042,24 +967,6 @@ export default function CollectionTab({
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end, { once: true });
-  };
-  const copyDocumentContent = async () => {
-    if (!docEditor) return;
-    try {
-      await api.request("clipboard.write", { text: docEditor.value });
-      notify(t("文件內容已複製", "Document content copied"));
-    } catch (e) {
-      setDocError(message(e));
-    }
-  };
-  const requestCloseDocEditor = () => {
-    if (docBusy || !docEditor) return;
-    if (!docEditor.readOnly && docEditor.value !== docEditor.originalValue) {
-      setDiscardDocEditor(true);
-      return;
-    }
-    setConflictServerDocument(undefined);
-    setDocEditor(undefined);
   };
   const workspace = (
     <div
@@ -1278,24 +1185,18 @@ export default function CollectionTab({
                   }
                 }}
               >
-                {tab.kind === "collection" && !freeMode && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={t("計算筆數", "Count documents")}
-                      title={t(
-                        "計算符合條件的文件數",
-                        "Count documents matching the filter",
-                      )}
-                      disabled={counting}
-                      onClick={() => void countDocuments()}
-                    >
-                      <Hash size={14} />
-                      {t("計算筆數", "Count documents")}
-                    </button>
-                  </>
-                )}
                 <div className="separator" />
+                {tab.kind === "collection" && !freeMode && (
+                  <button
+                    className="icon"
+                    onClick={() => setShowDelivery(true)}
+                  >
+                    {t("查詢交付", "Query delivery")}
+                  </button>
+                )}
+                <button className="icon" onClick={() => setShowBundle(true)}>
+                  {t("團隊查詢包", "Team query bundle")}
+                </button>
                 <button
                   className="icon"
                   aria-label={t("儲存查詢", "Save query")}
@@ -1377,11 +1278,6 @@ export default function CollectionTab({
                 </button>
               </div>
             </details>
-            {count !== undefined && (
-              <span className="count-result" role="status">
-                {t("符合", "Matching")} {count.toLocaleString()}
-              </span>
-            )}
             <div className="spacer" />
             <span className="muted small">
               {busy
@@ -1467,10 +1363,18 @@ export default function CollectionTab({
               </button>
             ))}
           </div>
-          <span className="muted small" role="status">
-            {rows.length.toLocaleString()} {t("筆已載入", "loaded")}
-            {hasMore ? t(" · 尚可載入更多", " · more available") : ""}
-          </span>
+          <QueryResultsStatus
+            loaded={rows.length}
+            hasMore={hasMore}
+            count={count}
+            counting={counting}
+            error={countError}
+            onCount={
+              tab.kind === "collection" && !freeMode
+                ? () => void countDocuments()
+                : undefined
+            }
+          />
           <div className="spacer" />
           {tab.kind === "collection" && !freeMode && (
             <button
@@ -1505,29 +1409,13 @@ export default function CollectionTab({
           )}
           <button
             className="toolbar-label-action"
-            aria-label={t(
-              "匯出查詢結果 Excel",
-              "Export query results as Excel",
-            )}
-            title={t(
-              "匯出查詢結果 Excel（.xlsx）",
-              "Export query results as Excel (.xlsx)",
-            )}
-            disabled={queryState !== "success"}
-            onClick={() => setExportFormat("excel")}
-          >
-            <FileSpreadsheet size={15} />
-            {t("匯出 Excel", "Export Excel")}
-          </button>
-          <button
-            className="toolbar-label-action"
-            aria-label={t("匯出查詢結果 CSV", "Export query results as CSV")}
-            title={t("匯出查詢結果 CSV", "Export query results as CSV")}
+            aria-label={t("匯出結果", "Export results")}
+            title={t("選擇匯出範圍與格式", "Choose export scope and format")}
             disabled={queryState !== "success"}
             onClick={() => setExportFormat("csv")}
           >
             <Download size={15} />
-            {t("匯出 CSV", "Export CSV")}
+            {t("匯出結果", "Export results")}
           </button>
           {tab.kind === "collection" && (
             <>
@@ -1578,6 +1466,7 @@ export default function CollectionTab({
               theme={theme}
               onEdit={edit}
               onCommit={commit}
+              onEditError={(error) => notify(message(error), true, true)}
               onSelect={setSelected}
               onRowInspect={inspectRow}
               onRowEdit={editRow}
@@ -1609,11 +1498,39 @@ export default function CollectionTab({
             query={query}
             close={() => setShowExplain(false)}
             profileProvider={profile?.provider || "mongodb"}
+            notify={notify}
             onOpenPreferences={onOpenPreferences}
+          />
+        )}
+        {showDelivery && (
+          <QueryDeliveryDialog
+            input={{
+              database: tab.database,
+              collection: tab.collection,
+              maxTimeMS: query.maxTimeMS,
+              skip: query.skip,
+              query: {
+                mode: "find",
+                filter,
+                sort,
+                projection,
+                batchSize,
+                code: "",
+              },
+            }}
+            close={() => setShowDelivery(false)}
+            notify={notify}
+          />
+        )}
+        {showBundle && (
+          <QueryBundleDialog
+            close={() => setShowBundle(false)}
+            notify={notify}
           />
         )}
         {savingQuery && (
           <SavedQueryDialog
+            notify={notify}
             value={savingQuery}
             close={() => setSavingQuery(undefined)}
             saved={() => {
@@ -1697,9 +1614,9 @@ export default function CollectionTab({
                   "Rows fetched per batch. Continue paging to review all matching documents.",
                 )}
               >
-                <span>BATCH</span>
+                <span>{t("每批載入", "Rows per batch")}</span>
                 <select
-                  aria-label="BATCH"
+                  aria-label={t("每批載入", "Rows per batch")}
                   value={batchSize}
                   onChange={(e) => {
                     const nextBatchSize = Number(e.target.value);
@@ -1811,34 +1728,40 @@ export default function CollectionTab({
             )}
           </p>
           <div className="export-scope-actions">
-            <button
-              disabled={!rows.length}
-              onClick={() => {
-                const format = exportFormat;
-                setExportFormat(undefined);
-                void exportLoadedResults(format);
-              }}
-            >
-              {t(
-                `匯出已載入的 ${rows.length.toLocaleString()} 筆（${exportFormat.toUpperCase()}）`,
-                `Export ${rows.length.toLocaleString()} loaded rows (${exportFormat.toUpperCase()})`,
-              )}
-            </button>
-            <button
-              className="primary"
-              onClick={() => exportAllMatching("json")}
-            >
-              {t(
-                "串流匯出所有符合條件的文件（Extended JSON）",
-                "Stream all matching documents (Extended JSON)",
-              )}
-            </button>
-            <button onClick={() => exportAllMatching("csv")}>
-              {t(
-                "串流匯出所有符合條件的文件（CSV）",
-                "Stream all matching documents (CSV)",
-              )}
-            </button>
+            {(["csv", "excel"] as const).map((format) => (
+              <button
+                key={format}
+                disabled={!rows.length}
+                onClick={() => {
+                  setExportFormat(undefined);
+                  void exportLoadedResults(format);
+                }}
+              >
+                {t(
+                  `匯出已載入的 ${rows.length.toLocaleString()} 筆（${format.toUpperCase()}）`,
+                  `Export ${rows.length.toLocaleString()} loaded rows (${format.toUpperCase()})`,
+                )}
+              </button>
+            ))}
+            {tab.kind === "collection" && !freeMode && (
+              <>
+                <button
+                  className="primary"
+                  onClick={() => exportAllMatching("json")}
+                >
+                  {t(
+                    "串流匯出所有符合條件的文件（Extended JSON）",
+                    "Stream all matching documents (Extended JSON)",
+                  )}
+                </button>
+                <button onClick={() => exportAllMatching("csv")}>
+                  {t(
+                    "串流匯出所有符合條件的文件（CSV）",
+                    "Stream all matching documents (CSV)",
+                  )}
+                </button>
+              </>
+            )}
           </div>
           <p className="hint">
             {t(
@@ -1848,304 +1771,13 @@ export default function CollectionTab({
           </p>
         </Modal>
       )}
-      {docEditor && (
-        <Modal
-          wide
-          resizable
-          documentViewer={docEditor.readOnly}
-          title={docEditor.title}
-          close={requestCloseDocEditor}
-          footer={
-            <>
-              <span className="muted">
-                {t(
-                  "簡易 JSON · 保留 BSON 型別",
-                  "Simple JSON · BSON types preserved",
-                )}
-              </span>
-              <button
-                className="icon"
-                aria-label={t("複製內容", "Copy content")}
-                title={t("複製內容", "Copy content")}
-                onClick={() => void copyDocumentContent()}
-                disabled={docBusy}
-              >
-                <Copy size={15} />
-              </button>
-              <button onClick={requestCloseDocEditor} disabled={docBusy}>
-                {t("關閉", "Close")}
-              </button>
-              {!docEditor.readOnly && (
-                <button
-                  onClick={() => {
-                    try {
-                      const formatted = formatEditableDocument(
-                        docEditor.value,
-                        tabWidth,
-                        docEditor.numericReferenceEjson ??
-                          docEditor.originalEjson,
-                      );
-                      setDocEditor({
-                        ...docEditor,
-                        value: formatted.value,
-                        numericReferenceEjson: formatted.ejson,
-                      });
-                      setDocError("");
-                    } catch (e) {
-                      setDocError(message(e));
-                    }
-                  }}
-                  disabled={docBusy}
-                >
-                  <Braces size={15} />
-                  {t("格式化文件", "Format document")}
-                </button>
-              )}
-              {!docEditor.readOnly && (
-                <button
-                  disabled={
-                    docBusy || docEditor.value === docEditor.originalValue
-                  }
-                  onClick={() => setShowDocChanges(true)}
-                >
-                  {t("檢視變更", "Review changes")}
-                </button>
-              )}
-              {!docEditor.readOnly && (
-                <button
-                  className="primary"
-                  disabled={docBusy}
-                  onClick={async () => {
-                    setDocBusy(true);
-                    setDocError("");
-                    try {
-                      const original = docEditor.originalEjson;
-                      const reference =
-                        docEditor.numericReferenceEjson ?? original;
-                      const document = encode(
-                        decode(
-                          docEditor.value,
-                          reference === undefined
-                            ? undefined
-                            : decode(reference),
-                        ),
-                      );
-                      await docEditor.submit(document, original);
-                      setDiscardDocEditor(false);
-                      setConflictServerDocument(undefined);
-                      setDocEditor(undefined);
-                    } catch (e) {
-                      const error = message(e);
-                      const diagnostic = diagnoseConnectionError(error);
-                      setDocError(
-                        diagnostic.kind === "compatibility"
-                          ? `${error}\n${t(
-                              "請在「編輯連線 → 進階設定」將「寫入重試」設為「停用」，儲存後重新連線。",
-                              diagnostic.advice,
-                            )}`
-                          : error,
-                      );
-                      if (/^Conflict:/.test(error))
-                        void refreshConflictDocument();
-                    } finally {
-                      setDocBusy(false);
-                    }
-                  }}
-                >
-                  {t("儲存", "Save")}
-                </button>
-              )}
-            </>
-          }
-        >
-          <div className="document-context">
-            <span title={tab.connectionName}>{tab.connectionName}</span>
-            <strong title={`${tab.database}.${tab.collection}`}>
-              {tab.database}.{tab.collection}
-            </strong>
-            {profile && (
-              <span className={`environment-badge ${profile.environment}`}>
-                {profile.environment.toUpperCase()}
-              </span>
-            )}
-            {readOnly && (
-              <span className="read-only-badge">{t("唯讀", "Read only")}</span>
-            )}
-            <code title={docIdentity}>
-              {docIdentity
-                ? `_id: ${docIdentity}`
-                : t("新文件", "New document")}
-            </code>
-          </div>
-          <div className="document-editor-surface">
-            <CodeEditor
-              theme={theme}
-              value={docEditor.value}
-              onChange={(v) => {
-                setDocEditor({ ...docEditor, value: v });
-                setDocError("");
-              }}
-              height="100%"
-              language={shellJsonLanguage}
-              readOnly={docEditor.readOnly}
-              defaultExpandedDepth={jsonExpandedDepth}
-              onReady={(instance) => {
-                docEditorRef.current = instance;
-              }}
-              validationError={
-                docErrorPosition
-                  ? { ...docErrorPosition, message: docError }
-                  : undefined
-              }
-            />
-          </div>
-          {docError && (
-            <div className="notice error document-error" role="alert">
-              <strong>
-                {docErrorPosition
-                  ? t(
-                      "文件語法無法解析，請修正後再儲存。",
-                      "The document could not be parsed. Fix the syntax before saving.",
-                    )
-                  : t(
-                      "無法確認儲存成功。請查看詳細訊息；遇到逾時或連線中斷時，先重新查詢確認資料。",
-                      "The save could not be confirmed. Check the details; after a timeout or connection failure, refresh the document before retrying.",
-                    )}
-              </strong>
-              {docErrorPosition && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const instance = docEditorRef.current,
-                      model = instance?.getModel();
-                    if (!instance || !model) return;
-                    const lineNumber = Math.min(
-                      docErrorPosition.line,
-                      model.getLineCount(),
-                    );
-                    const column = Math.min(
-                      docErrorPosition.column,
-                      model.getLineMaxColumn(lineNumber),
-                    );
-                    instance.setPosition({ lineNumber, column });
-                    instance.revealPositionInCenter({ lineNumber, column });
-                    instance.focus();
-                  }}
-                >
-                  {t(
-                    `跳到第 ${docErrorPosition.line} 行，第 ${docErrorPosition.column} 列`,
-                    `Go to line ${docErrorPosition.line}, column ${docErrorPosition.column}`,
-                  )}
-                </button>
-              )}
-              <details>
-                <summary>{t("詳細訊息", "Details")}</summary>
-                <pre>{docError}</pre>
-              </details>
-            </div>
-          )}
-          {conflictServerDocument && (
-            <div className="notice warning" role="status">
-              {t(
-                "已讀取資料庫目前版本。請檢視差異後，選擇保留目前編輯或使用資料庫版本。",
-                "The current database version was loaded. Review the differences, then keep your edit or use the database version.",
-              )}
-            </div>
-          )}
-        </Modal>
-      )}
-      {showDocChanges && docEditor && (
-        <Modal
-          wide
-          title={t("文件變更", "Document changes")}
-          close={() => setShowDocChanges(false)}
-          footer={
-            <>
-              {conflictServerDocument && (
-                <button className="danger" onClick={applyServerDocument}>
-                  {t("使用資料庫版本", "Use database version")}
-                </button>
-              )}
-              <button onClick={() => setShowDocChanges(false)}>
-                {t("保留目前編輯", "Keep current edit")}
-              </button>
-            </>
-          }
-        >
-          {(() => {
-            try {
-              const changes = documentChanges(
-                conflictServerDocument?.ejson ??
-                  docEditor.originalValueEjson ??
-                  docEditor.originalEjson ??
-                  docEditor.originalValue,
-                docEditor.value,
-                docEditor.numericReferenceEjson ?? docEditor.originalEjson,
-              );
-              return changes.length ? (
-                <div className="document-change-list">
-                  {changes.map((change) => (
-                    <div
-                      className={`document-change ${change.kind}`}
-                      key={`${change.kind}:${change.path}`}
-                    >
-                      <code>{change.path}</code>
-                      <span>{change.kind}</span>
-                      {change.before !== undefined && (
-                        <del>{change.before}</del>
-                      )}
-                      {change.after !== undefined && <ins>{change.after}</ins>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted">
-                  {t("沒有可比較的變更。", "No changes to compare.")}
-                </p>
-              );
-            } catch {
-              return (
-                <p className="notice error">
-                  {t(
-                    "目前內容不是有效的 JSON 或 Mongo Shell 文件，請先格式化或修正後再比較。",
-                    "The current content is not valid JSON or a Mongo Shell document. Correct it before comparing.",
-                  )}
-                </p>
-              );
-            }
-          })()}
-        </Modal>
-      )}
-      {discardDocEditor && docEditor && (
-        <Modal
-          title={t("放棄未儲存的變更", "Discard unsaved changes")}
-          close={() => setDiscardDocEditor(false)}
-          footer={
-            <>
-              <button onClick={() => setDiscardDocEditor(false)}>
-                {t("取消", "Cancel")}
-              </button>
-              <button
-                className="danger"
-                onClick={() => {
-                  setDiscardDocEditor(false);
-                  setConflictServerDocument(undefined);
-                  setDocEditor(undefined);
-                }}
-              >
-                {t("放棄變更", "Discard changes")}
-              </button>
-            </>
-          }
-        >
-          <p>
-            {t(
-              "關閉後將遺失此文件中尚未儲存的內容。",
-              "Closing will discard the unsaved content in this document.",
-            )}
-          </p>
-        </Modal>
-      )}
+      <DocumentEditorDialogs
+        controller={documentEditor}
+        tab={tab}
+        profile={profile}
+        notify={notify}
+        readOnly={readOnly}
+      />
       {deleteConfirm && (
         <Modal
           title={t("刪除選取文件", "Delete selected document")}

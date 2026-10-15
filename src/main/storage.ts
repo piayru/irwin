@@ -11,6 +11,12 @@ import {
   type SavedPipeline,
 } from "../shared/saved-pipeline";
 import { compileReadOnlyPipeline } from "../shared/aggregation";
+import { parseQueryBundle, validateSavedQuery } from "../shared/query-delivery";
+import { parameterizedDocument } from "../shared/query-parameters";
+import {
+  parseExplainRecord,
+  type ExplainRecord,
+} from "../shared/explain-record";
 import {
   operationReceiptSchema,
   type OperationReceipt,
@@ -52,7 +58,7 @@ export class Storage {
     let version = Number(
       this.db.prepare("PRAGMA user_version").get()?.user_version,
     );
-    if (version > 6) throw new Error(`Unsupported storage version ${version}`);
+    if (version > 7) throw new Error(`Unsupported storage version ${version}`);
     if (version < 5) {
       this.db.exec(`BEGIN;
         CREATE TABLE IF NOT EXISTS saved_pipelines(id TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -64,6 +70,13 @@ export class Storage {
       this.db.exec(`BEGIN;
         CREATE TABLE IF NOT EXISTS operation_receipts(id TEXT PRIMARY KEY, occurredAt TEXT NOT NULL, value TEXT NOT NULL);
         PRAGMA user_version=6;
+        COMMIT;`);
+      version = 6;
+    }
+    if (version < 7) {
+      this.db.exec(`BEGIN;
+        CREATE TABLE IF NOT EXISTS explain_records(id TEXT PRIMARY KEY, capturedAt TEXT NOT NULL, value TEXT NOT NULL);
+        PRAGMA user_version=7;
         COMMIT;`);
     }
   }
@@ -341,6 +354,7 @@ export class Storage {
   }
   saveQuery(value: unknown) {
     const query = savedQuerySchema.parse(value);
+    validateSavedQuery(query);
     this.db
       .prepare(
         "INSERT INTO saved_queries VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
@@ -362,12 +376,62 @@ export class Storage {
   savePipeline(value: unknown) {
     const pipeline = savedPipelineSchema.parse(value);
     compileReadOnlyPipeline(pipeline.stages);
+    pipeline.stages
+      .filter((stage) => stage.enabled)
+      .forEach((stage) =>
+        parameterizedDocument(stage.text, pipeline.parameters || []),
+      );
     this.db
       .prepare(
         "INSERT INTO saved_pipelines VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
       )
       .run(pipeline.id, JSON.stringify(pipeline));
     return pipeline;
+  }
+  importQueryBundle(value: unknown) {
+    const bundle = parseQueryBundle(value);
+    const queries = bundle.queries.map((query) => ({
+      ...query,
+      id: randomUUID(),
+    }));
+    const pipelines = bundle.pipelines.map((pipeline) => ({
+      ...pipeline,
+      id: randomUUID(),
+      stages: pipeline.stages.map((stage) => ({ ...stage, id: randomUUID() })),
+    }));
+    this.db.exec("BEGIN");
+    try {
+      queries.forEach((query) => this.saveQuery(query));
+      pipelines.forEach((pipeline) => this.savePipeline(pipeline));
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { queries, pipelines };
+  }
+  explainRecords(): ExplainRecord[] {
+    return this.db
+      .prepare(
+        "SELECT value FROM explain_records ORDER BY capturedAt DESC LIMIT 200",
+      )
+      .all()
+      .map((row) => parseExplainRecord(JSON.parse(row.value as string)));
+  }
+  saveExplainRecord(value: unknown) {
+    const record = parseExplainRecord(value);
+    this.db
+      .prepare(
+        "INSERT INTO explain_records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET capturedAt=excluded.capturedAt,value=excluded.value",
+      )
+      .run(record.id, record.capturedAt, JSON.stringify(record));
+    this.db.exec(
+      "DELETE FROM explain_records WHERE id NOT IN (SELECT id FROM explain_records ORDER BY capturedAt DESC LIMIT 200)",
+    );
+    return record;
+  }
+  deleteExplainRecord(id: string) {
+    this.db.prepare("DELETE FROM explain_records WHERE id=?").run(id);
   }
   deletePipeline(id: string) {
     this.db.prepare("DELETE FROM saved_pipelines WHERE id=?").run(id);

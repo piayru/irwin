@@ -2,7 +2,11 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { MongoClient, ObjectId } from "mongodb";
 import { DatabaseService } from "../src/core/database";
-import { aggregationSchema, profileSchema } from "../src/shared/contracts";
+import {
+  aggregationSchema,
+  profileSchema,
+  querySchema,
+} from "../src/shared/contracts";
 import { decode } from "../src/shared/bson";
 
 let server: MongoMemoryServer;
@@ -143,3 +147,44 @@ test.each(["production", "writable"])(
     ).toBe(false);
   },
 );
+
+test("diagnostics capture the executed hint, collation, skip and index definitions on a read-only connection", async () => {
+  await client
+    .db("aggregation_test")
+    .collection("people")
+    .createIndex({ n: 1 });
+  const input = querySchema.parse({
+    connectionId: "production",
+    database: "aggregation_test",
+    collection: "people",
+    filter: "{n:{$gte:200}}",
+    sort: "{n:1}",
+    projection: "{n:1}",
+    skip: 1,
+    hint: "{n:1}",
+    collation: '{locale:"simple"}',
+  });
+  const record = await database.execute("diagnostics.capture", {
+    kind: "find",
+    input,
+  });
+  expect(decode(record.plan).executionStats.nReturned.valueOf()).toBe(4);
+  expect(
+    decode(record.plan).executionStats.totalKeysExamined.valueOf(),
+  ).toBeGreaterThan(0);
+  expect(
+    decode(record.indexes).some((index: any) => index.name === "n_1"),
+  ).toBe(true);
+  expect(record.capturedAt).toMatch(/^\d{4}-/);
+  expect(record.durationMS).toBeGreaterThanOrEqual(0);
+  const pipeline = aggregationSchema.parse({
+    ...input,
+    stages: [makeStage("{$match:{n:{$gte:200}}}")],
+    hint: "{n:1}",
+  });
+  const aggregate = await database.execute("diagnostics.capture", {
+    kind: "aggregation",
+    input: pipeline,
+  });
+  expect(decode(aggregate.plan)).toHaveProperty("executionStats");
+});

@@ -5,6 +5,30 @@ Irwin uses `electron-updater` 6.8.9 and the lockfile-resolved `electron-builder`
 identity, publisher/team identity, and GitHub repository stable across upgrades.
 The runtime checks for releases; downloading and installing require user action.
 
+The sidebar version entry opens release notes. **Confirm download and update**
+starts downloading; verified updates install and restart automatically only after
+the idle-workspace handshake. Windows calls `quitAndInstall(true, true)`; the NSIS
+include also makes `--updated` installs silent for legacy callers that omit `/S`.
+The update dialog supports dragging its resize grip and maximizing/restoring.
+HTML and Markdown notes are sanitized to passive formatting; scripts, styles,
+embedded media, forms and navigation are removed. Use **Open GitHub Releases**
+to follow links in the original release. Download shows a measured percentage
+below 100 until the installer is verified. Retried/fallback downloads and file
+verification use distinct indeterminate progress instead of replaying 0–100%.
+When connections or tabs remain open, **Restart and install** opens a confirmation
+showing their counts and warning that unsaved queries will be lost. Confirming
+first saves unexecuted Shell drafts, closes the tabs, then performs the idle
+handshake before native installation closes connections and restarts the app.
+Cancellation or a draft-save failure preserves the open tabs. Background work
+and other editors/dialogs still block restart and are never discarded implicitly.
+During Windows installation a native, non-interactive progress banner remains
+visible after the old app exits, and closes on completion/failure. It uses an
+indeterminate bar because NSIS does not expose completed bytes to this flow;
+no guessed percentage or extra installer confirmations are displayed.
+Keep ordinary manual installations interactive. An already-installed v0.1.1 can
+still download during its check; a new release cannot retrofit a confirmation
+button into that old running process.
+
 ## Platform payloads
 
 - Windows: NSIS `.exe`, its `.blockmap`, and `latest.yml` for x64.

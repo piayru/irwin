@@ -70,7 +70,7 @@ test("migration from v4 retains existing saved queries", () => {
   storage.close();
   const reopened = new DatabaseSync(path);
   try {
-    expect(reopened.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
+    expect(reopened.prepare("PRAGMA user_version").get()?.user_version).toBe(7);
   } finally {
     reopened.close();
   }

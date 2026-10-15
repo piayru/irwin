@@ -577,8 +577,8 @@ export function PreferencesDialog({
               </div>
               <div className="preferences-scope-banner">
                 {t(
-                  "結果顯示偏好會套用於所有分頁；檢視方式、查詢／資料排列與 BATCH 仍保存在各自分頁。",
-                  "Result display preferences apply across tabs. View, query/data arrangement and BATCH remain saved per tab.",
+                  "結果顯示偏好會套用於所有分頁；檢視方式、查詢／資料排列與每批載入筆數仍保存在各自分頁。",
+                  "Result display preferences apply across tabs. View, query/data arrangement and rows per batch remain saved per tab.",
                 )}
               </div>
               <div className="preferences-job-section">

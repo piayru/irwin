@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import type { Row } from "../shared/contracts";
 import { escapeCsvText } from "../shared/csv";
 
@@ -173,6 +172,7 @@ function excelTable(rows: ExportRow[]): {
 }
 export async function excelContent(rows: ExportRow[]): Promise<string> {
   const table = excelTable(rows);
+  const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   workbook
     .addWorksheet("Query Results")

@@ -93,6 +93,25 @@ describe("MongoDB exploration", () => {
         .returned,
     ).toBeUndefined();
   });
+  it("reports final aggregation output instead of the cursor input count", () => {
+    const summary = summarizeExplain({
+      stages: [
+        {
+          $cursor: {
+            queryPlanner: { winningPlan: { stage: "COLLSCAN" } },
+            executionStats: {
+              nReturned: 200,
+              totalDocsExamined: 200,
+              totalKeysExamined: 0,
+              executionTimeMillis: 3,
+            },
+          },
+        },
+        { $group: { _id: "$team" }, nReturned: { $numberLong: "2" } },
+      ],
+    });
+    expect(summary).toMatchObject({ returned: 2, examined: 200, ratio: 100 });
+  });
   it("counts missing documents separately from null and reports array bounds", () => {
     const report = analyzeDocuments([
       { age: { $numberInt: "2" }, tags: [1, 2] },

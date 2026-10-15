@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parametersSchema } from "./query-parameters";
 
 // Store input text verbatim to preserve BSON literals and numeric precision.
 // Targets are descriptive metadata; applying a query always uses the active tab.
@@ -7,6 +8,7 @@ export const savedQuerySchema = z.object({
   name: z.string().trim().min(1).max(160),
   group: z.string().trim().max(160).default(""),
   description: z.string().max(2000).default(""),
+  parameters: parametersSchema.optional(),
   source: z
     .object({
       connectionName: z.string().max(255),

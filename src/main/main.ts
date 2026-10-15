@@ -12,7 +12,7 @@ import {
 } from "electron";
 import electronUpdater from "electron-updater";
 import { join, resolve } from "node:path";
-import { mkdirSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import {
@@ -30,6 +30,8 @@ import { shouldCheckShellDrafts } from "./window-close-lifecycle";
 import { developmentIconPath } from "./app-icon";
 import { nativeThemeSource } from "./theme";
 import { capInteractiveQueryTimeout } from "../shared/query-timeout";
+import { parseQueryBundle } from "../shared/query-delivery";
+import { parseExplainRecord } from "../shared/explain-record";
 import { jobNotificationKind } from "../shared/job-notifications";
 import { shouldAutoCheckForUpdates, UpdateService } from "./update-service";
 import {
@@ -74,11 +76,13 @@ function busyForUpdate() {
   );
 }
 async function prepareUpdateRestart() {
-  if (shuttingDown || busyForUpdate() || !window || window.isDestroyed())
-    return false;
+  if (shuttingDown || !window || window.isDestroyed()) return false;
   const id = randomUUID();
-  const ready = await updateRestartGuard.request(id, () =>
-    event({ type: "updateRestart", data: { id } }),
+  const ready = await updateRestartGuard.request(
+    id,
+    () => event({ type: "updateRestart", data: { id } }),
+    5000,
+    busyForUpdate,
   );
   if (!ready || shuttingDown || busyForUpdate() || window.isDestroyed())
     return false;
@@ -619,6 +623,81 @@ async function request(command: Command, raw: any): Promise<any> {
       return storage.savePipeline(p);
     case "savedPipelines.delete":
       return storage.deletePipeline(p.id);
+    case "queryBundles.read":
+    case "diagnostics.read": {
+      const path = resolve(p.path);
+      if (fileGrants.get(path) !== "open")
+        throw new Error("Select an import file using the file picker");
+      if (statSync(path).size > 8 * 1024 * 1024)
+        throw new Error("Import file exceeds 8 MB");
+      const value = JSON.parse(readFileSync(path, "utf8"));
+      return command === "queryBundles.read"
+        ? parseQueryBundle(value)
+        : parseExplainRecord(value);
+    }
+    case "queryBundles.import":
+      return storage.importQueryBundle(p);
+    case "delivery.export":
+      if (fileGrants.get(resolve(p.path)) !== "save")
+        throw new Error("Select an export path using the file picker");
+      await writeFile(resolve(p.path), p.content, "utf8");
+      return { path: resolve(p.path) };
+    case "diagnostics.list":
+      return storage.explainRecords();
+    case "diagnostics.save":
+      return storage.saveExplainRecord(p);
+    case "diagnostics.import":
+      return storage.saveExplainRecord({ ...p, id: randomUUID() });
+    case "diagnostics.delete":
+      return storage.deleteExplainRecord(p.id);
+    case "diagnostics.capture": {
+      const profile = storage.profile(p.input.connectionId);
+      const input = {
+        ...p.input,
+        maxTimeMS: Math.min(p.input.maxTimeMS, profile.queryTimeoutMS),
+      };
+      await connect(input.connectionId);
+      const captured = await engine().request(
+        command,
+        { kind: p.kind, input },
+        input.maxTimeMS + 15000,
+      );
+      const {
+        connectionId,
+        database: databaseName,
+        collection,
+        cursorId,
+        throughIndex,
+        batchSize,
+        ...options
+      } = input;
+      return storage.saveExplainRecord({
+        format: "irwin-explain-record",
+        version: 1,
+        id: randomUUID(),
+        name: `${collection} · ${captured.capturedAt}`,
+        capturedAt: captured.capturedAt,
+        appVersion: app.getVersion(),
+        source: {
+          connectionName: profile.name,
+          database: databaseName,
+          collection,
+          provider: profile.provider,
+          environment: profile.environment,
+        },
+        serverVersion: captured.serverVersion,
+        durationMS: captured.durationMS,
+        warnings: captured.warnings,
+        indexes: captured.indexes,
+        plan: captured.plan,
+        input: {
+          ...options,
+          kind: p.kind,
+          hint: input.hint || "",
+          collation: input.collation || "",
+        },
+      });
+    }
     case "operationReceipts.list":
       return storage.receipts();
     case "operationReceipts.clear":

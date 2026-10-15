@@ -1,0 +1,56 @@
+{
+  "format": "irwin-installation-acceptance",
+  "version": 1,
+  "capturedAt": "2026-10-05T18:34:22.762Z",
+  "platform": "Windows",
+  "osVersion": "10.0.26200",
+  "architecture": "x64",
+  "artifactName": "Irwin-0.1.2-win-x64.exe",
+  "artifactBytes": 152902537,
+  "sha256": "1bce154acccb85197f90655aa029b34f3226aa9ab50ead043beef456083dad6f",
+  "signature": "NotSigned",
+  "method": "automatic install/reinstall smoke checks; explicitly verified manual task-owned uninstall",
+  "checks": [
+    {
+      "name": "silent install into isolated workspace target",
+      "status": "passed",
+      "method": "native NSIS script"
+    },
+    {
+      "name": "installed launch and bundled Database Tools",
+      "status": "passed",
+      "method": "installation-smoke install log"
+    },
+    {
+      "name": "same-version reinstall preserves settings and saved queries",
+      "status": "passed",
+      "method": "installation-smoke upgrade log"
+    },
+    {
+      "name": "uninstall removes task-owned executable",
+      "status": "passed",
+      "method": "manual exact HKCU target check, /currentuser uninstaller, executable absence"
+    },
+    {
+      "name": "existing machine executable and installation location preserved",
+      "status": "passed",
+      "method": "SHA-256 equality before/after task-owned cleanup; HKLM InstallLocation equality"
+    },
+    {
+      "name": "corrected runner refuses existing machine installation before mutation",
+      "status": "passed",
+      "method": "observed expected nonzero exit and refusal message"
+    }
+  ],
+  "limitations": [
+    "Initial runner missed version-suffixed DisplayName and failed its final signature-module/report step; detection and PowerShell environment were corrected.",
+    "This host has an existing machine-wide Irwin installation. A complete corrected automated runner is pending a clean profile or VM."
+  ],
+  "pending": [
+    "clean Windows profile/VM full automated acceptance",
+    "downloaded artifact / SmartScreen policy",
+    "older-release upgrade",
+    "native macOS installation",
+    "native Ubuntu installation"
+  ]
+}

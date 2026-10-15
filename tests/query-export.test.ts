@@ -1,6 +1,21 @@
 import { expect, test } from "vitest";
 import type { QueryInput } from "../src/shared/contracts";
-import { allMatchingTransfer } from "../src/renderer/query-export";
+import {
+  allMatchingTransfer,
+  exportFilename,
+} from "../src/renderer/query-export";
+
+test("export filenames distinguish loaded results from all matching documents and remove path separators", () => {
+  expect(exportFilename("orders", "loaded", "excel")).toBe(
+    "orders-loaded.xlsx",
+  );
+  expect(exportFilename("orders", "all-matching", "json")).toBe(
+    "orders-all-matching.json",
+  );
+  expect(exportFilename("../orders\\2026", "loaded", "csv")).toBe(
+    ".._orders_2026-loaded.csv",
+  );
+});
 
 test("all-matching export keeps the query conditions but never uses the visible-page skip", () => {
   const query: QueryInput = {

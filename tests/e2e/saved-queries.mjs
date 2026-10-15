@@ -106,7 +106,7 @@ try {
   }, server.getUri());
   await page.reload();
   await connect("QA Source", "source_qa");
-  await active().getByLabel("BATCH", { exact: true }).selectOption("25");
+  await active().getByLabel("Rows per batch", { exact: true }).selectOption("25");
   await expect(active().locator(".results-wrapper")).toHaveAttribute(
     "aria-busy",
     "false",
@@ -124,7 +124,7 @@ try {
     "{active:true}",
   );
   await expect(
-    dialog().getByRole("spinbutton", { name: /^BATCH\b/ }),
+    dialog().getByRole("spinbutton", { name: /^Rows per batch\b/ }),
   ).toHaveValue("25");
   await expect(
     dialog().getByLabel("Query name", { exact: true }),
@@ -139,7 +139,7 @@ try {
     dialog().getByLabel("Description", { exact: true }),
   ).toHaveAttribute("name", "saved-query-description");
   await expect(
-    dialog().getByRole("spinbutton", { name: /^BATCH\b/ }),
+    dialog().getByRole("spinbutton", { name: /^Rows per batch\b/ }),
   ).toHaveAttribute("name", "saved-query-batch");
   await dialog().getByLabel("Query name", { exact: true }).fill("Active rows");
   await dialog()
@@ -205,7 +205,7 @@ try {
     .getByLabel("Group / folder", { exact: true })
     .fill("Regression / Shared");
   await dialog()
-    .getByRole("spinbutton", { name: /^BATCH\b/ })
+    .getByRole("spinbutton", { name: /^Rows per batch\b/ })
     .fill("2");
   await dialog()
     .getByRole("button", { name: "Save query", exact: true })
@@ -229,7 +229,7 @@ try {
   await check(
     "Custom saved batch 2 is accurately displayed",
     async () =>
-      await expect(active().getByLabel("BATCH", { exact: true })).toHaveValue(
+      await expect(active().getByLabel("Rows per batch", { exact: true })).toHaveValue(
         "2",
       ),
   );

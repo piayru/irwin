@@ -2,6 +2,8 @@ import { z } from "zod";
 import { tableLayoutSchema, workspaceSchema } from "./workspace";
 import { savedQuerySchema } from "./saved-query";
 import { savedPipelineSchema } from "./saved-pipeline";
+import { queryBundleSchema } from "./query-delivery";
+import { explainRecordSchema } from "./explain-record";
 import type { AggregationStageDraft } from "./aggregation";
 import {
   aiAssistantRequestSchema,
@@ -187,6 +189,8 @@ export const querySchema = target.extend({
   skip: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   batchSize: z.number().int().min(1).max(1000).default(100),
   maxTimeMS: z.number().int().min(100).max(3600000).default(30000),
+  hint: z.string().max(100000).optional(),
+  collation: z.string().max(100000).optional(),
 });
 // Optional legacy property keeps older callers type-compatible; the runtime
 // query contract omits it and collection reads are no longer capped by LIMIT.
@@ -202,6 +206,8 @@ export const aggregationSchema = target.extend({
   throughIndex: z.number().int().min(0).max(49).optional(),
   batchSize: z.number().int().min(1).max(1000).default(100),
   maxTimeMS: z.number().int().min(100).max(3600000).default(30000),
+  hint: z.string().max(100000).optional(),
+  collation: z.string().max(100000).optional(),
 });
 export type AggregationInput = z.infer<typeof aggregationSchema> & {
   stages: AggregationStageDraft[];
@@ -424,6 +430,21 @@ export const commands = {
   "savedPipelines.list": z.object({}),
   "savedPipelines.save": savedPipelineSchema,
   "savedPipelines.delete": z.object({ id }),
+  "queryBundles.read": z.object({ path: z.string().min(1) }),
+  "queryBundles.import": queryBundleSchema,
+  "delivery.export": z.object({
+    path: z.string().min(1),
+    content: z.string().max(8 * 1024 * 1024),
+  }),
+  "diagnostics.capture": z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("find"), input: querySchema }),
+    z.object({ kind: z.literal("aggregation"), input: aggregationSchema }),
+  ]),
+  "diagnostics.list": z.object({}),
+  "diagnostics.save": explainRecordSchema,
+  "diagnostics.read": z.object({ path: z.string().min(1) }),
+  "diagnostics.import": explainRecordSchema,
+  "diagnostics.delete": z.object({ id }),
   "operationReceipts.list": z.object({}),
   "operationReceipts.clear": z.object({}),
   "history.save": z.object({
@@ -481,6 +502,7 @@ export interface ShellResult {
 }
 export interface JobProgress {
   jobId: string;
+  importTarget?: { connectionId: string; database: string };
   status: "running" | "completed" | "failed" | "cancelled";
   processed: number;
   failed: number;

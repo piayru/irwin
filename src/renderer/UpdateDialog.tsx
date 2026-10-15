@@ -1,6 +1,7 @@
 import { useUi } from "./ui";
 import { Modal } from "./ui";
 import type { UpdateStatus } from "../main/update-service";
+import { ReleaseNotes } from "./ReleaseNotes";
 
 export function UpdateDialog({
   currentVersion,
@@ -21,6 +22,10 @@ export function UpdateDialog({
 }) {
   const { t } = useUi();
   const state = status?.state ?? "idle";
+  const downloadIndeterminate =
+    state === "downloading" &&
+    (status?.downloadPhase === "recovering" ||
+      status?.downloadPhase === "verifying");
   const busy =
     state === "checking" || state === "downloading" || state === "installing";
   const message = (() => {
@@ -35,14 +40,18 @@ export function UpdateDialog({
           `Irwin ${status?.availableVersion ?? ""} is available.`,
         );
       case "downloading":
+        if (status?.downloadPhase === "recovering")
+          return t("正在重試下載更新檔…", "Retrying the update download…");
+        if (status?.downloadPhase === "verifying")
+          return t("正在驗證更新檔…", "Verifying the update file…");
         return t("正在下載更新…", "Downloading the update…");
       case "installing":
         return t("正在安裝更新並重新啟動…", "Installing and restarting…");
       case "downloaded":
         if (status?.restartDeferred)
           return t(
-            "更新已下載。請先儲存並關閉工作分頁、其他對話框，等待背景任務完成，再按重新啟動並安裝。",
-            "Update downloaded. Save and close workspace tabs and other dialogs, then wait for background work to finish before restarting.",
+            "更新已下載。按「重新啟動並安裝」可確認關閉目前連線與分頁；若仍有背景工作，請等待完成。",
+            "Update downloaded. Restart and install lets you confirm closing current connections and tabs. Wait for background work to finish first.",
           );
         return t(
           "更新已下載，重新啟動即可安裝。",
@@ -69,16 +78,15 @@ export function UpdateDialog({
     status?.delivery === "automatic" &&
     Boolean(status.availableVersion) &&
     (state === "available" || state === "error" || state === "downloaded");
-  const canOpenRelease =
-    state === "error" ||
-    (status?.delivery === "manual" && state === "available");
   const releaseNotes = status?.releaseNotes?.trim();
+  const canOpenRelease = state === "error" || Boolean(status?.availableVersion);
 
   return (
     <Modal
       title={t("軟體更新", "Software updates")}
       close={onClose}
       className="update-modal"
+      resizable
       footer={
         <>
           <span className="muted">
@@ -96,7 +104,7 @@ export function UpdateDialog({
                 ? t("重新啟動並安裝", "Restart and install")
                 : state === "error"
                   ? t("重試更新並重新啟動", "Retry update and restart")
-                  : t("更新並重新啟動", "Update and restart")}
+                  : t("確認下載並更新", "Confirm download and update")}
             </button>
           ) : (
             <button disabled={busy} onClick={onCheck}>
@@ -113,22 +121,53 @@ export function UpdateDialog({
         </div>
         {state === "downloading" && (
           <div
-            className="update-progress"
+            className={`update-progress${downloadIndeterminate ? " indeterminate" : ""}`}
             role="progressbar"
-            aria-label={t("更新下載進度", "Update download progress")}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={status?.progress ?? 0}
+            aria-label={
+              status?.downloadPhase === "verifying"
+                ? t("更新驗證進度", "Update verification progress")
+                : t("更新下載進度", "Update download progress")
+            }
+            aria-valuemin={downloadIndeterminate ? undefined : 0}
+            aria-valuemax={downloadIndeterminate ? undefined : 100}
+            aria-valuenow={
+              downloadIndeterminate ? undefined : (status?.progress ?? 0)
+            }
           >
-            <span style={{ width: `${status?.progress ?? 0}%` }} />
-            <small>{status?.progress ?? 0}%</small>
+            <span
+              style={
+                downloadIndeterminate
+                  ? undefined
+                  : { width: `${status?.progress ?? 0}%` }
+              }
+            />
+            <small>
+              {downloadIndeterminate
+                ? t("請稍候…", "Please wait…")
+                : `${status?.progress ?? 0}%`}
+            </small>
+          </div>
+        )}
+        {state === "installing" && (
+          <div
+            className="update-progress indeterminate"
+            role="progressbar"
+            aria-label={t("更新安裝進度", "Update installation progress")}
+          >
+            <span />
+            <small>
+              {t(
+                "正在準備安裝，完成後自動重新啟動",
+                "Preparing installation; Irwin will restart automatically",
+              )}
+            </small>
           </div>
         )}
         {status?.delivery === "automatic" && state === "available" && (
           <p className="muted">
             {t(
-              "按「更新並重新啟動」會自動下載、安裝並重新啟動。請先儲存並關閉工作分頁；若仍有工作進行中，更新會暫緩重新啟動。",
-              "Update and restart downloads and installs the update, then restarts Irwin. Save and close workspace tabs first; restart is deferred while work is open or running.",
+              "請先閱讀下方版本說明。按「確認下載並更新」才會下載更新，完成後靜默安裝並重新啟動。請先儲存並關閉工作分頁；若仍有工作進行中，更新會暫緩重新啟動。",
+              "Review the release notes below. Confirm download and update downloads the update, then silently installs it and restarts Irwin. Save and close workspace tabs first; restart is deferred while work is open or running.",
             )}
           </p>
         )}
@@ -153,15 +192,26 @@ export function UpdateDialog({
             )}
           </p>
         )}
-        {(state === "available" || state === "downloaded") &&
-          status?.releaseName && (
-            <h3 className="update-release-title">{status.releaseName}</h3>
-          )}
-        {(state === "available" || state === "downloaded") && releaseNotes && (
-          <div className="update-notes">
+        {status?.availableVersion && (
+          <section
+            className="update-notes"
+            aria-label={t("版本說明", "Release notes")}
+          >
+            <h3 className="update-release-title">
+              {status.releaseName || `Irwin ${status.availableVersion}`}
+            </h3>
             <h3>{t("版本說明", "Release notes")}</h3>
-            <pre>{releaseNotes}</pre>
-          </div>
+            {releaseNotes ? (
+              <ReleaseNotes content={releaseNotes} />
+            ) : (
+              <p className="muted">
+                {t(
+                  "此版本未提供版本說明。",
+                  "No release notes were provided for this version.",
+                )}
+              </p>
+            )}
+          </section>
         )}
       </section>
     </Modal>

@@ -1,4 +1,4 @@
-import { object } from "./bson";
+import { decode, encode, object } from "./bson";
 
 export interface AggregationStageDraft {
   id: string;
@@ -34,7 +34,24 @@ const READ_ONLY_STAGES = new Set([
   "$replaceWith",
   "$sample",
   "$sortByCount",
+  "$unionWith",
+  "$graphLookup",
+  "$bucket",
+  "$bucketAuto",
+  "$geoNear",
+  "$setWindowFields",
+  "$densify",
+  "$fill",
+  "$search",
+  "$searchMeta",
+  "$vectorSearch",
 ]);
+const MINIMUM_VERSION: Record<string, [number, number]> = {
+  $unionWith: [4, 4],
+  $setWindowFields: [5, 0],
+  $densify: [5, 1],
+  $fill: [5, 3],
+};
 const MAX_STAGES = 50;
 const MAX_BYTES = 1024 * 1024;
 const MAX_NESTING = 8;
@@ -53,6 +70,7 @@ function validatePipeline(
   stageIndex: number,
   path: string,
   depth: number,
+  serverVersion?: string,
 ): void {
   if (!Array.isArray(pipeline))
     throw new AggregationStageError(
@@ -85,13 +103,30 @@ function validatePipeline(
         stageIndex,
         `${location} uses ${operator}, which is not approved for read-only aggregation`,
       );
+    const minimum = MINIMUM_VERSION[operator];
+    const version = serverVersion?.match(/^(\d+)\.(\d+)/);
+    if (
+      minimum &&
+      version &&
+      (+version[1] < minimum[0] ||
+        (+version[1] === minimum[0] && +version[2] < minimum[1]))
+    )
+      throw new AggregationStageError(
+        stageIndex,
+        `${operator} requires MongoDB ${minimum.join(".")} or later (server ${serverVersion})`,
+      );
     const value = stage[operator];
-    if (operator === "$lookup" && isPlainDocument(value) && "pipeline" in value)
+    if (
+      (operator === "$lookup" || operator === "$unionWith") &&
+      isPlainDocument(value) &&
+      "pipeline" in value
+    )
       validatePipeline(
         value.pipeline,
         stageIndex,
-        `${location}.$lookup.pipeline`,
+        `${location}.${operator}.pipeline`,
         depth + 1,
+        serverVersion,
       );
     if (operator === "$facet") {
       if (!isPlainDocument(value))
@@ -105,6 +140,7 @@ function validatePipeline(
           stageIndex,
           `${location}.$facet.${name}`,
           depth + 1,
+          serverVersion,
         );
     }
   }
@@ -113,6 +149,7 @@ function validatePipeline(
 /** Compile only enabled stages. This check must also run in the database worker. */
 export function compileReadOnlyPipeline(
   stages: AggregationStageDraft[],
+  serverVersion?: string,
 ): Record<string, any>[] {
   if (stages.length > MAX_STAGES)
     throw new AggregationStageError(
@@ -134,8 +171,33 @@ export function compileReadOnlyPipeline(
     } catch (error) {
       throw new AggregationStageError(index, (error as Error).message);
     }
-    validatePipeline([parsed], index, "pipeline", 0);
+    validatePipeline([parsed], index, "pipeline", 0, serverVersion);
     compiled.push(parsed);
   }
   return compiled;
+}
+
+export function importPipeline(text: string): AggregationStageDraft[] {
+  if (new TextEncoder().encode(text).byteLength > MAX_BYTES)
+    throw new AggregationStageError(0, "Pipeline exceeds 1 MB of stage text");
+  const pipeline = decode(text);
+  if (!Array.isArray(pipeline))
+    throw new AggregationStageError(0, "pipeline must be a pipeline array");
+  const stages = pipeline.map((stage) => ({
+    id: crypto.randomUUID(),
+    enabled: true,
+    text: encode(stage),
+  }));
+  compileReadOnlyPipeline(stages);
+  return stages;
+}
+
+export function stageDebugPipelines(
+  stages: AggregationStageDraft[],
+  index: number,
+) {
+  if (!Number.isInteger(index) || index < 0 || index >= stages.length)
+    throw new Error("Invalid stage index");
+  compileReadOnlyPipeline(stages.slice(0, index + 1));
+  return { before: stages.slice(0, index), after: stages.slice(0, index + 1) };
 }

@@ -4,15 +4,23 @@ import { savedQuerySchema, type SavedQuery } from "../shared/saved-query";
 import { object } from "../shared/bson";
 import { Modal, Field, api, message, useUi } from "./ui";
 import { QueryInput } from "./QueryInput";
+import { ParameterEditor, ResolveParametersDialog } from "./QueryParameters";
+import { QueryBundleDialog } from "./QueryDelivery";
+import {
+  resolveQueryParameters,
+  validateSavedQuery,
+} from "../shared/query-delivery";
 
 export function SavedQueryDialog({
   value,
   close,
   saved,
+  notify = () => {},
 }: {
   value: SavedQuery;
   close(): void;
   saved(value: SavedQuery): void;
+  notify?(text: string, error?: boolean): void;
 }) {
   const { t } = useUi();
   const [draft, setDraft] = useState(value);
@@ -47,6 +55,7 @@ export function SavedQueryDialog({
     }
     try {
       const parsed = savedQuerySchema.parse(draft);
+      validateSavedQuery(parsed);
       if (parsed.query.mode === "find") {
         for (const field of ["filter", "sort", "projection"] as const) {
           try {
@@ -61,6 +70,7 @@ export function SavedQueryDialog({
       saved(result);
     } catch (e) {
       setError(message(e));
+      notify(message(e), true);
     } finally {
       setBusy(false);
     }
@@ -137,7 +147,7 @@ export function SavedQueryDialog({
               />
             ))}
             <div className="saved-query-numbers">
-              <Field label="BATCH">
+              <Field label={t("每批載入", "Rows per batch")}>
                 <input
                   type="number"
                   name="saved-query-batch"
@@ -156,6 +166,10 @@ export function SavedQueryDialog({
                 </small>
               </Field>
             </div>
+            <ParameterEditor
+              value={draft.parameters || []}
+              change={(parameters) => setDraft({ ...draft, parameters })}
+            />
           </>
         ) : (
           <Field full label={t("Shell 程式", "Shell script")}>
@@ -196,10 +210,12 @@ export function SavedQueries({
   revision,
   target,
   apply,
+  notify,
 }: {
   revision: number;
   target?: { label: string; kind: "collection" | "shell" };
   apply(query: SavedQuery): void;
+  notify?(text: string, error?: boolean): void;
 }) {
   const { t } = useUi();
   const [items, setItems] = useState<SavedQuery[]>([]);
@@ -208,9 +224,17 @@ export function SavedQueries({
   const [editing, setEditing] = useState<SavedQuery>();
   const [removing, setRemoving] = useState<SavedQuery>();
   const [busy, setBusy] = useState(false);
+  const [showBundle, setShowBundle] = useState(false),
+    [parameterQuery, setParameterQuery] = useState<SavedQuery>();
   const refresh = async () => {
     setItems(await api.request("savedQueries.list", {}));
   };
+  useEffect(() => {
+    const listener = () => void refresh().catch((e) => setError(message(e)));
+    window.addEventListener("irwin:query-library-changed", listener);
+    return () =>
+      window.removeEventListener("irwin:query-library-changed", listener);
+  }, []);
   useEffect(() => {
     let live = true;
     api
@@ -255,6 +279,9 @@ export function SavedQueries({
       aria-label={t("已儲存查詢", "Saved queries")}
     >
       <div className="saved-query-search">
+        <button onClick={() => setShowBundle(true)}>
+          {t("團隊查詢包", "Team query bundle")}
+        </button>
         <Search size={15} />
         <input
           aria-label={t("搜尋已儲存查詢", "Search saved queries")}
@@ -319,7 +346,11 @@ export function SavedQueries({
                     !target ||
                     (item.query.mode === "find" && target.kind === "shell")
                   }
-                  onClick={() => apply(item)}
+                  onClick={() =>
+                    item.parameters?.length
+                      ? setParameterQuery(item)
+                      : apply(item)
+                  }
                 >
                   {t("套用到目前分頁", "Apply to current tab")}
                 </button>
@@ -351,11 +382,32 @@ export function SavedQueries({
       ))}
       {editing && (
         <SavedQueryDialog
+          notify={notify}
           value={editing}
           close={() => setEditing(undefined)}
           saved={() => {
             setEditing(undefined);
             void refresh().catch((e) => setError(message(e)));
+          }}
+        />
+      )}
+      {showBundle && (
+        <QueryBundleDialog close={() => setShowBundle(false)} notify={notify} />
+      )}
+      {parameterQuery && (
+        <ResolveParametersDialog
+          parameters={parameterQuery.parameters || []}
+          close={() => setParameterQuery(undefined)}
+          apply={(values) => {
+            apply({
+              ...parameterQuery,
+              query: resolveQueryParameters(
+                parameterQuery.query,
+                parameterQuery.parameters || [],
+                values,
+              ),
+            });
+            setParameterQuery(undefined);
           }}
         />
       )}

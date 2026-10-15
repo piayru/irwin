@@ -288,7 +288,9 @@ try {
       more.getByRole("button", { name: "儲存查詢", exact: true }),
     ).toBeVisible();
     await expect(
-      more.getByRole("button", { name: "計算筆數", exact: true }),
+      active()
+        .locator(".result-toolbar")
+        .getByRole("button", { name: "計算筆數", exact: true }),
     ).toBeVisible();
     await more.locator("summary").press("Escape");
     await expect(more).not.toHaveAttribute("open", "");

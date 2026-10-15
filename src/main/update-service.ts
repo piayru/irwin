@@ -15,6 +15,7 @@ export type UpdateStatus = {
   releaseNotes?: string;
   delivery?: "automatic" | "manual";
   progress?: number;
+  downloadPhase?: "transferring" | "recovering" | "verifying";
   restartDeferred?: boolean;
   checkedAt?: string;
   message?: string;
@@ -119,6 +120,8 @@ export class UpdateService {
   private value: UpdateStatus;
   private pendingCheck?: Promise<UpdateStatus>;
   private pendingInstall?: Promise<void>;
+  private lastDownloadPercent = 0;
+  private downloadRecovering = false;
   private readonly updater?: UpdateAdapter;
   private readonly fetcher: typeof fetch;
   private readonly onStatus: (status: UpdateStatus) => void;
@@ -182,10 +185,13 @@ export class UpdateService {
         await this.updater.checkForUpdates();
         if (this.value.state !== "available")
           throw new Error("The update feed is not ready");
+        this.lastDownloadPercent = 0;
+        this.downloadRecovering = false;
         this.set({
           ...this.value,
           state: "downloading",
           progress: 0,
+          downloadPhase: "transferring",
           message: undefined,
           restartDeferred: false,
         });
@@ -292,6 +298,7 @@ export class UpdateService {
           delivery: "automatic",
           message: undefined,
           progress: undefined,
+          downloadPhase: undefined,
         });
       },
     );
@@ -303,11 +310,25 @@ export class UpdateService {
     updater.on("download-progress", (progress: { percent?: number }) => {
       if (this.value.state !== "downloading") return;
       const percent = Number(progress?.percent);
+      if (!Number.isFinite(percent) || percent < 0) return;
+      // Differential transfers can finish, fail verification and fall back to
+      // a full transfer. Their percentages are not one overall progress bar.
+      // Once a transfer restarts, show honest indeterminate progress instead.
+      if (percent < this.lastDownloadPercent) this.downloadRecovering = true;
+      this.lastDownloadPercent = percent;
+      const downloadPhase =
+        percent >= 100
+          ? "verifying"
+          : this.downloadRecovering
+            ? "recovering"
+            : "transferring";
       this.set({
         ...this.value,
-        progress: Number.isFinite(percent)
-          ? Math.max(0, Math.min(100, Math.round(percent)))
-          : 0,
+        downloadPhase,
+        progress:
+          downloadPhase === "transferring"
+            ? Math.min(99, Math.round(percent))
+            : undefined,
       });
     });
     updater.on(
@@ -324,6 +345,7 @@ export class UpdateService {
               : this.value.releaseNotes,
           delivery: "automatic",
           progress: 100,
+          downloadPhase: undefined,
         });
       },
     );
@@ -335,6 +357,7 @@ export class UpdateService {
       ...this.value,
       state: "error",
       progress: undefined,
+      downloadPhase: undefined,
       checkedAt: new Date().toISOString(),
       message:
         "The update could not be completed. Retry the update or use GitHub Releases.",
