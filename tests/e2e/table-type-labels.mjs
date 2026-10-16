@@ -157,7 +157,9 @@ try {
       .toBe(true);
   }
   const missing = rows.nth(2).locator(".grid-cell").first();
-  await missing.click();
+  // The preceding long-value preview can cover later cells at Windows font
+  // metrics. The row header remains visible and selects that row's first cell.
+  await rows.nth(2).getByRole("rowheader").click();
   await expect(missing.locator(".cell-type-badge")).toHaveText("Missing");
   // Keyboard selection uses the same labels as pointer selection.
   await page.getByRole("grid").press("ArrowUp");

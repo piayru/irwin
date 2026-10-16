@@ -4,7 +4,7 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
-## 0.1.4 — 2026-10-16
+## 0.1.5 — 2026-10-16
 
 ### Improvements
 
