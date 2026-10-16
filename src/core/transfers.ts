@@ -751,6 +751,11 @@ export class TransferService {
   private async bson(job: Job) {
     const p = job.input;
     const r = p.resolved;
+    // Validate user input before reserving any output file.
+    const filterDoc =
+      p.direction === "export" && p.collection
+        ? object(p.filter || "{}")
+        : undefined;
     if (r.profile.provider === "cosmos")
       throw new Error(
         "BSON tools are not verified for Cosmos RU. Use Extended JSON instead.",
@@ -857,7 +862,14 @@ export class TransferService {
         args.push("--sslPEMKeyFile", options.tlsCertificateKeyFile);
       if (p.direction === "export") {
         args.push("--db", p.database);
-        if (p.collection) args.push("--collection", p.collection);
+        if (p.collection) {
+          args.push("--collection", p.collection);
+          if (filterDoc && Object.keys(filterDoc).length > 0) {
+            const queryPath = join(temp, "query.json");
+            await writeFile(queryPath, encode(filterDoc), { mode: 0o600 });
+            args.push("--queryFile", queryPath);
+          }
+        }
       } else {
         args.push("--nsInclude", `${p.database}.${p.collection || "*"}`);
         if (p.drop) args.push("--drop");

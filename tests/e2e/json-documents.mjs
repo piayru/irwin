@@ -261,10 +261,10 @@ try {
   console.log(
     "PASS nested JSON field editing uses simple format and preserves BSON types and precision",
   );
-  await expect(active().locator("details.output pre")).toContainText(
+  await expect(detailsCell.locator(".cell-preview")).toContainText(
     `ObjectId("${copyHex}")`,
   );
-  await expect(active().locator("details.output pre")).not.toContainText(
+  await expect(detailsCell.locator(".cell-preview")).not.toContainText(
     "$oid",
   );
 

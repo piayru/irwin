@@ -34,7 +34,10 @@ export function useQueryCount(query: QueryInput, enabled: boolean) {
     if (result.error !== undefined) {
       setCount(undefined);
       setCountError(result.error);
-    } else setCount(result.count);
+    } else {
+      setCount(result.count);
+      return result.count;
+    }
   };
   return { count, counting, countError, countDocuments };
 }

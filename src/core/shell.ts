@@ -18,6 +18,15 @@ import type {
 import { encode } from "../shared/bson";
 import { assertWritable } from "./policy";
 
+const writeResultTypes = new Set([
+  "UpdateResult",
+  "DeleteResult",
+  "InsertOneResult",
+  "InsertManyResult",
+  "BulkWriteResult",
+  "ClientBulkWriteResult",
+]);
+
 export class ShellService {
   runtime: ShellInstanceState | undefined;
   private evaluator?: ShellEvaluator<any>;
@@ -35,6 +44,29 @@ export class ShellService {
       { ...resolved.options, promoteValues: false, promoteLongs: false },
       { nodb },
     );
+    // The driver's bulk accumulator requires numeric reply counters. Keep BSON
+    // document reads lossless; only bulk command replies use numeric promotion.
+    const bulkWrite = provider.bulkWrite.bind(provider);
+    provider.bulkWrite = (db, collection, operations, options, dbOptions) =>
+      bulkWrite(
+        db,
+        collection,
+        operations,
+        { ...options, promoteValues: true },
+        dbOptions,
+      );
+    const clientBulkWrite = provider.clientBulkWrite.bind(provider);
+    provider.clientBulkWrite = (operations, options) =>
+      clientBulkWrite(operations, { ...options, promoteValues: true });
+    const initializeBulkOp = provider.initializeBulkOp.bind(provider);
+    provider.initializeBulkOp = (db, collection, ordered, options, dbOptions) =>
+      initializeBulkOp(
+        db,
+        collection,
+        ordered,
+        { ...options, promoteValues: true },
+        dbOptions,
+      );
     this.runtime = new ShellInstanceState(provider, undefined, { nodb });
     this.context = createContext({
       setTimeout,
@@ -116,10 +148,32 @@ export class ShellService {
     if (typeof value === "string") return value;
     if (value === undefined) return "";
     try {
-      return encode(value);
+      return encode(value) ?? String(value);
     } catch {
       return String(value);
     }
+  }
+  get database(): string | undefined {
+    try {
+      return this.runtime?.currentDb.getName();
+    } catch {
+      return undefined;
+    }
+  }
+  private response(
+    kind: NonNullable<ShellResult["kind"]>,
+    rows: Row[],
+    hasMore = false,
+    value?: string,
+  ): ShellResult {
+    return {
+      kind,
+      rows,
+      output: this.output,
+      hasMore,
+      database: this.database,
+      ...(value === undefined ? {} : { value }),
+    };
   }
   async execute(code: string): Promise<ShellResult> {
     if (!this.runtime) throw new Error("Shell is closed");
@@ -162,16 +216,19 @@ export class ShellService {
             reason: "Shell result is read-only",
           });
         }
-        return { rows, output: this.output, hasMore: false };
+        return this.response("documents", rows);
       }
       const result = (await toShellResult(raw)) as any;
       const rows: Row[] = [];
       const printable = result.printable;
+      let kind: NonNullable<ShellResult["kind"]> = "command";
+      let value: string | undefined;
       if (
         result.type === "Cursor" ||
         result.type === "AggregationCursor" ||
         result.type === "ChangeStreamCursor"
       ) {
+        kind = "documents";
         const docs = Array.isArray(printable)
           ? printable
           : printable?.documents;
@@ -187,8 +244,10 @@ export class ShellService {
         this.more = Boolean(printable?.hasMore);
       } else if (
         result.type === "Document" ||
-        result.type === "DocumentArray"
+        result.type === "DocumentArray" ||
+        writeResultTypes.has(result.type)
       ) {
+        kind = writeResultTypes.has(result.type) ? "write" : "documents";
         (Array.isArray(printable) ? printable : [printable]).forEach(
           (doc: any) =>
             rows.push({
@@ -197,9 +256,22 @@ export class ShellService {
               reason: "Shell result is read-only",
             }),
         );
-      } else if (printable !== undefined)
-        this.output.push(this.print(printable).slice(0, 262144));
-      return { rows, output: this.output, hasMore: this.more };
+      } else if (printable !== undefined) {
+        kind = "value";
+        value = encode(printable);
+        const text =
+          typeof printable === "string"
+            ? printable
+            : (value ?? String(printable));
+        this.output.push(text.slice(0, 262144));
+        if (value && value.length > 262144) {
+          value = undefined;
+          this.output.push(
+            "Result display truncated; use a cursor for batched results.",
+          );
+        }
+      }
+      return this.response(kind, rows, this.more, value);
     } finally {
       this.busy = false;
     }
@@ -226,7 +298,7 @@ export class ShellService {
       await this.cursor.close();
       this.cursor = undefined;
     }
-    return { rows, output: this.output, hasMore: this.more };
+    return this.response("documents", rows, this.more);
   }
   async next() {
     if (!this.more || !this.cursor) throw new Error("No more shell results");

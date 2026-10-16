@@ -15,13 +15,16 @@ import {
 import { documentErrorLocation } from "./document-error";
 import { documentChanges } from "./document-diff";
 import { diagnoseConnectionError } from "../shared/connection-diagnostics";
+import { resolveViewStyles } from "./appearance";
 type DocumentContext = {
   tab: WorkspaceTab;
   profile?: Profile;
   notify(text: string, error?: boolean, autoDismiss?: boolean): void;
 };
 export function useDocumentEditor({ tab, notify }: DocumentContext) {
-  const { t, tabWidth } = useUi();
+  const ui = useUi();
+  const { t } = ui;
+  const { tabWidth } = resolveViewStyles(ui).json;
   const target = {
     connectionId: tab.connectionId,
     database: tab.database,
@@ -147,7 +150,9 @@ export function DocumentEditorDialogs({
   controller: ReturnType<typeof useDocumentEditor>;
   readOnly: boolean;
 } & DocumentContext) {
-  const { t, theme, tabWidth, jsonExpandedDepth } = useUi();
+  const ui = useUi();
+  const { t, theme, jsonExpandedDepth } = ui;
+  const { tabWidth } = resolveViewStyles(ui).json;
   const {
     docEditor,
     setDocEditor,

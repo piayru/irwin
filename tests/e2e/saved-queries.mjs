@@ -106,7 +106,9 @@ try {
   }, server.getUri());
   await page.reload();
   await connect("QA Source", "source_qa");
-  await active().getByLabel("Rows per batch", { exact: true }).selectOption("25");
+  await active()
+    .getByLabel("Rows per batch", { exact: true })
+    .selectOption("25");
   await expect(active().locator(".results-wrapper")).toHaveAttribute(
     "aria-busy",
     "false",
@@ -175,8 +177,9 @@ try {
   );
   await expect(
     active()
-      .locator(".grid-cell")
-      .filter({ hasText: /^source_qa-0$/ }),
+      .locator(".cell-preview")
+      .filter({ hasText: /^source_qa-0$/ })
+      .locator("../.."),
   ).toBeVisible();
   checks.push(
     "Apply to same collection restores inputs without auto-executing",
@@ -229,14 +232,15 @@ try {
   await check(
     "Custom saved batch 2 is accurately displayed",
     async () =>
-      await expect(active().getByLabel("Rows per batch", { exact: true })).toHaveValue(
-        "2",
-      ),
+      await expect(
+        active().getByLabel("Rows per batch", { exact: true }),
+      ).toHaveValue("2"),
   );
   await expect(
     active()
-      .locator(".grid-cell")
-      .filter({ hasText: /^target_qa-0$/ }),
+      .locator(".cell-preview")
+      .filter({ hasText: /^target_qa-0$/ })
+      .locator("../.."),
   ).toBeVisible();
   await active().getByRole("button", { name: "Run", exact: true }).click();
   await expect(active().locator(".results-wrapper")).toHaveAttribute(
@@ -246,8 +250,9 @@ try {
   await expect(active().locator(".grid-row")).toHaveCount(2);
   await expect(
     active()
-      .locator(".grid-cell")
-      .filter({ hasText: /^target_qa$/ }),
+      .locator(".cell-preview")
+      .filter({ hasText: /^target_qa$/ })
+      .locator("../.."),
   ).toHaveCount(2);
   await expect(
     active().getByRole("button", { name: "Sort by column _id", exact: true }),

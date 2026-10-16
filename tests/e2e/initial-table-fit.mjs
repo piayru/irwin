@@ -143,8 +143,9 @@ try {
     .click();
   await expect(
     active()
-      .locator(".grid-cell")
+      .locator(".cell-preview")
       .filter({ hasText: /^filterList$/ })
+      .locator("../..")
       .first(),
   ).toBeVisible({ timeout: 10000 });
   const freshOpen = {

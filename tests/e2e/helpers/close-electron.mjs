@@ -11,47 +11,7 @@ export async function closeElectronWindowNormally(app) {
     return;
   }
 
-  const windowsClosed = Promise.all(
-    app
-      .windows()
-      .filter((page) => !page.isClosed())
-      .map((page) => page.waitForEvent("close", { timeout: 10000 })),
-  ).catch((cause) => {
-    throw new Error(
-      `Electron windows did not close normally (pid=${child.pid})`,
-      { cause },
-    );
-  });
-  let closeRequestError;
-  await Promise.all([
-    windowsClosed,
-    app
-      .evaluate(({ app, BrowserWindow }) => {
-        // Release the inspector from the normal quit lifecycle. Once Node is
-        // waiting for debugger disconnect, another evaluate(app.quit) RPC can
-        // no longer complete. A prevented window close never reaches will-quit.
-        app.once("will-quit", () => {
-          process.getBuiltinModule("node:inspector").close();
-        });
-        for (const window of BrowserWindow.getAllWindows()) window.close();
-      })
-      .catch((error) => {
-        closeRequestError = error;
-      }),
-  ]);
-  // Quitting can close the evaluation transport before it returns its result.
-  if (
-    closeRequestError &&
-    !/Target page, context or browser has been closed|Target closed/.test(
-      String(closeRequestError),
-    )
-  )
-    throw closeRequestError;
-  if (child.exitCode !== null || child.signalCode) {
-    assertNormalExit();
-    return;
-  }
-
+  // Subscribe before requesting close: Electron can exit during that RPC.
   let onExit;
   const exited = new Promise((resolve) => {
     onExit = resolve;
@@ -59,28 +19,57 @@ export async function closeElectronWindowNormally(app) {
   });
   let timeout;
   try {
-    // All windows have closed normally; release Playwright's Node inspector so
-    // Electron does not remain at "Waiting for the debugger to disconnect".
+    const windowsClosed = Promise.all(
+      app
+        .windows()
+        .filter((page) => !page.isClosed())
+        .map((page) => page.waitForEvent("close", { timeout: 10000 })),
+    ).catch((cause) => {
+      throw new Error(
+        `Electron windows did not close normally (pid=${child.pid})`,
+        { cause },
+      );
+    });
+    let failCloseRequest;
+    const closeRequestFailed = new Promise((_, reject) => {
+      failCloseRequest = reject;
+    });
+    void app
+      .evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.close();
+      })
+      .catch((error) => {
+        // A successful quit may close the evaluation transport before replying.
+        if (
+          !/Target page, context or browser has been closed|Target closed/.test(
+            String(error),
+          )
+        )
+          failCloseRequest(error);
+      });
+
+    await Promise.race([windowsClosed, closeRequestFailed]);
+    // Window.close starts the app's own quit lifecycle. Playwright detaches its
+    // inspector when Node requests it. A second app.close() would send another
+    // quit RPC into that teardown and can hang even after the window is gone.
     await Promise.race([
-      Promise.all([app.close(), exited]),
+      exited,
+      closeRequestFailed,
       new Promise((_, reject) => {
         timeout = setTimeout(
           () =>
             reject(
               new Error(
-                `Electron did not exit after debugger disconnect (pid=${child.pid}, exitCode=${child.exitCode})`,
+                `Electron did not exit after normal window close (pid=${child.pid}, exitCode=${child.exitCode})`,
               ),
             ),
-          // Windows inspector/transport teardown can lag after the windows close.
-          // Keep the window-close deadline above strict; only debugger exit gets
-          // the longer budget, and still requires a clean process exit.
           30000,
         );
       }),
     ]);
+    assertNormalExit();
   } finally {
     clearTimeout(timeout);
     child.removeListener("exit", onExit);
   }
-  assertNormalExit();
 }

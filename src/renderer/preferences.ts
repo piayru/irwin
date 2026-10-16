@@ -33,6 +33,7 @@ export function resetSettingsSection(
         theme: defaults.theme,
         systemLightTheme: defaults.systemLightTheme,
         uiScale: defaults.uiScale,
+        themeOverrides: {},
       };
     case "editor":
       return {
@@ -43,6 +44,7 @@ export function resetSettingsSection(
         editorLineHeight: defaults.editorLineHeight,
         editorPadding: defaults.editorPadding,
         tabWidth: defaults.tabWidth,
+        viewSettings: { table: {}, tree: {}, json: {} },
       };
     case "query-results":
       return {

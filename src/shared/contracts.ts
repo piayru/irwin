@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { themeOverridesSchema, viewSettingsSchema } from "./appearance";
 import { tableLayoutSchema, workspaceSchema } from "./workspace";
 import { savedQuerySchema } from "./saved-query";
 import { savedPipelineSchema } from "./saved-pipeline";
@@ -104,71 +105,101 @@ export const timezones = [
   "Europe/London",
   "Europe/Berlin",
 ] as const;
-export const settingsSchema = z.object({
-  language: z.enum(["zh", "en"]).default("zh"),
-  theme: z.enum(["dark", "light", "azure", "forest", "system"]).default("dark"),
-  systemLightTheme: z.enum(["light", "azure", "forest"]).default("light"),
-  uiScale: z
-    .union([z.literal(100), z.literal(110), z.literal(125)])
-    .default(100),
-  fontFamily: z
-    .string()
-    .min(1)
-    .max(160)
-    .default('Inter, "Segoe UI", "Noto Sans TC", sans-serif'),
-  editorFontFamily: z
-    .string()
-    .min(1)
-    .max(160)
-    .default(
-      'ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
-    ),
-  fontSize: z.number().int().min(11).max(18).default(13),
-  editorLineHeight: z.number().int().min(18).max(36).default(24),
-  editorPadding: z.number().int().min(8).max(32).default(16),
-  autoRunOnOpen: z.boolean().default(true),
-  autoCheckUpdates: z.boolean().default(true),
-  rowDensity: z.enum(["comfortable", "compact"]).default("comfortable"),
-  longTextDisplay: z.enum(["truncate", "wrap"]).default("truncate"),
-  bsonTypeLabels: z.enum(["selected", "always"]).default("selected"),
-  jobNotifications: z.enum(["off", "failures", "all"]).default("failures"),
-  aiCloudConsent: z.boolean().default(false),
-  aiDefaultProviderId: z.string().max(128).default(""),
-  jsonExpandedDepth: z.number().int().min(0).max(4).default(0),
-  timezone: z.enum(timezones).default("local"),
-  datetimeFormat: z.enum(["iso", "space", "locale"]).default("iso"),
-  tabWidth: z.union([z.literal(2), z.literal(4), z.literal(8)]).default(2),
-  colors: z
-    .object({
-      string: z
-        .string()
-        .regex(/^#[0-9a-f]{6}$/i)
-        .default("#c7d6e0"),
-      number: z
-        .string()
-        .regex(/^#[0-9a-f]{6}$/i)
-        .default("#e6bd89"),
-      objectId: z
-        .string()
-        .regex(/^#[0-9a-f]{6}$/i)
-        .default("#8bbba9"),
-      boolean: z
-        .string()
-        .regex(/^#[0-9a-f]{6}$/i)
-        .default("#bd9ddb"),
-      null: z
-        .string()
-        .regex(/^#[0-9a-f]{6}$/i)
-        .default("#5c6974"),
-    })
-    .default({
-      string: "#c7d6e0",
-      number: "#e6bd89",
-      objectId: "#8bbba9",
-      boolean: "#bd9ddb",
-      null: "#5c6974",
-    }),
-});
+export const settingsSchema = z
+  .object({
+    language: z.enum(["zh", "en"]).default("zh"),
+    theme: z
+      .enum([
+        "dark",
+        "light",
+        "azure",
+        "forest",
+        "midnight",
+        "graphite",
+        "lavender",
+        "paper",
+        "system",
+      ])
+      .default("dark"),
+    systemLightTheme: z
+      .enum(["light", "azure", "forest", "lavender", "paper"])
+      .default("light"),
+    uiScale: z
+      .union([z.literal(100), z.literal(110), z.literal(125)])
+      .default(100),
+    themeOverrides: themeOverridesSchema,
+    viewSettings: viewSettingsSchema,
+    fontFamily: z
+      .string()
+      .min(1)
+      .max(160)
+      .default('Inter, "Segoe UI", "Noto Sans TC", sans-serif'),
+    editorFontFamily: z
+      .string()
+      .min(1)
+      .max(160)
+      .default(
+        'ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+      ),
+    fontSize: z.number().int().min(11).max(18).default(13),
+    editorLineHeight: z.number().int().min(18).max(36).default(24),
+    editorPadding: z.number().int().min(8).max(32).default(16),
+    autoRunOnOpen: z.boolean().default(true),
+    autoCheckUpdates: z.boolean().default(true),
+    rowDensity: z.enum(["comfortable", "compact"]).default("comfortable"),
+    longTextDisplay: z.enum(["truncate", "wrap"]).default("truncate"),
+    bsonTypeLabels: z.enum(["selected", "always"]).default("selected"),
+    jobNotifications: z.enum(["off", "failures", "all"]).default("failures"),
+    aiCloudConsent: z.boolean().default(false),
+    aiDefaultProviderId: z.string().max(128).default(""),
+    jsonExpandedDepth: z.number().int().min(0).max(4).default(0),
+    timezone: z.enum(timezones).default("local"),
+    datetimeFormat: z.enum(["iso", "space", "locale"]).default("iso"),
+    tabWidth: z.union([z.literal(2), z.literal(4), z.literal(8)]).default(2),
+    colors: z
+      .object({
+        string: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .default("#c7d6e0"),
+        number: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .default("#e6bd89"),
+        objectId: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .default("#8bbba9"),
+        boolean: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .default("#bd9ddb"),
+        null: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i)
+          .default("#5c6974"),
+      })
+      .default({
+        string: "#c7d6e0",
+        number: "#e6bd89",
+        objectId: "#8bbba9",
+        boolean: "#bd9ddb",
+        null: "#5c6974",
+      }),
+  })
+  .superRefine((settings, context) => {
+    for (const view of ["table", "tree", "json"] as const) {
+      const style = settings.viewSettings[view];
+      const fontSize =
+        style.fontSize ?? (view === "json" ? settings.fontSize : 12);
+      if (style.lineHeight !== undefined && style.lineHeight < fontSize + 2)
+        context.addIssue({
+          code: "custom",
+          path: ["viewSettings", view, "lineHeight"],
+          message: "Line height must be at least font size + 2",
+        });
+    }
+  });
 export type Settings = z.infer<typeof settingsSchema>;
 const target = z.object({ connectionId: id, database: name, collection: name });
 const userRoleReferenceSchema = z.strictObject({
@@ -495,6 +526,8 @@ export interface Page {
   elapsedMS: number;
 }
 export interface ShellResult {
+  kind?: "documents" | "write" | "value" | "command";
+  value?: string;
   rows: Row[];
   output: string[];
   hasMore: boolean;

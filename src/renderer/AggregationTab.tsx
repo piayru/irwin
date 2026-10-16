@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, Sparkles } from "lucide-react";
 import {
   querySchema,
@@ -12,7 +12,9 @@ import {
   importPipeline,
   type AggregationStageDraft,
 } from "../shared/aggregation";
+import { fieldCatalog } from "../shared/exploration";
 import { Results } from "./Results";
+import { QueryInput } from "./QueryInput";
 import { api, message, useUi } from "./ui";
 import type { WorkspaceTab } from "./CollectionTab";
 import {
@@ -97,6 +99,14 @@ export default function AggregationTab({
   const [editorPercent, setEditorPercent] = useState(38);
   const generation = useRef(0);
   const currentCursor = useRef("");
+  const completionFields = useMemo(
+    () => fieldCatalog(rows.slice(0, 100).map((row) => JSON.parse(row.ejson))),
+    [rows],
+  );
+  const completions = {
+    fields: completionFields,
+    collections: collectionNames,
+  };
   useEffect(() => {
     let live = true;
     void api
@@ -490,13 +500,11 @@ export default function AggregationTab({
                   {t("比較輸入／輸出", "Compare input / output")}
                 </button>
               </div>
-              <textarea
-                aria-label={`${t("階段內容", "Stage document")} ${index + 1}`}
-                spellCheck={false}
+              <QueryInput
+                label={`${t("階段內容", "Stage document")} ${index + 1}`}
                 value={stage.text}
-                onChange={(event) =>
-                  replaceStage(index, { ...stage, text: event.target.value })
-                }
+                onChange={(text) => replaceStage(index, { ...stage, text })}
+                context={completions}
               />
             </section>
           ),
@@ -656,7 +664,7 @@ export default function AggregationTab({
           language={language}
           profileProvider="mongodb"
           collectionNames={collectionNames}
-          fieldHints={[]}
+          fieldHints={completionFields}
           aggregationStages={stages}
           onApplyAggregation={(draft) =>
             updateStages(

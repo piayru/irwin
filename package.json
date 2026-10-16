@@ -90,14 +90,18 @@
         "from": "build/third-party-licenses",
         "to": "third-party-licenses",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/._*",
+          "!**/.DS_Store"
         ]
       },
       {
         "from": "vendor/tools/${os}-${arch}",
         "to": "tools",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/._*",
+          "!**/.DS_Store"
         ]
       }
     ],

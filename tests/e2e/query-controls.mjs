@@ -308,8 +308,9 @@ try {
       await page.mouse.move(box.x + 64, box.y + 12, { steps: 6 });
       await page.mouse.up();
       await active()
-        .locator(".grid-cell")
+        .locator(".cell-preview")
         .filter({ hasText: /^Alpha$/ })
+        .locator("../..")
         .click({ button: "right" });
       await page
         .getByRole("button", { name: "Pin column", exact: true })

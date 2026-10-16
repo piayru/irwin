@@ -6,6 +6,11 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ### Improvements
 
+- Add per-theme custom palettes with color pickers, HEX input, live preview, individual resets and explicit save/cancel in Appearance preferences.
+- Configure Table, Tree and JSON fonts, sizes, line spacing, padding and applicable indentation independently, with matching virtual row heights and document-editor display.
+- Add Midnight and Graphite dark palettes plus Lavender and Paper light palettes, with matching native frames, editor color schemes and settings previews.
+- Show compact type tags for every table value, with full type names on hover and the existing selection/always-show preference.
+- Reduce workspace, query-toolbar and pagination spacing to leave more room for results without changing table row density.
 - Add repeatable WSL Docker acceptance for standalone, authenticated and replica-set MongoDB, plus isolated Windows installation/reinstallation/uninstallation checks with JSON evidence.
 - Consolidate result exports into one scope/format picker; name loaded and all-matching files explicitly and label page size as rows per batch.
 - Accept whole BSON-aware pipelines, modern read-only aggregation stages and stage input/output sample comparison with version checks and nested write-stage rejection.
@@ -20,6 +25,18 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ### Fixes
 
+- Keep Shell's displayed database, saved queries and subsequent history aligned with `use`/`getSiblingDB`, including scripts that switch databases before failing and sessions reset after cancellation.
+- Display Shell scalar values and print-only command completion in the primary results area; reserve the empty-query message for document queries.
+- Preserve successful query/write results when local history or draft cleanup fails, with a warning that the operation must not be repeated.
+- Correct collection, legacy and MongoDB client bulk-write counters without changing BSON document-read precision.
+- Keep Run and Stop disabled while cancellation resets the Shell session.
+- Show Mongo Shell update/insert/delete/bulk-write acknowledgements and counts as read-only result rows instead of an incorrect empty-query message.
+- Preserve Find and Aggregation cancellation during server-version detection, including disconnects and duplicate cursor requests.
+- Validate BSON export filters before creating partial archives, allowing corrected filters to retry the same destination.
+- Refresh Count before jumping to the last page, update the displayed total, and ignore failed or stale counts.
+- Keep collection Output collapsed until explicitly opened, including after query errors and subsequent cell edits; preserve manual expansion during the current session.
+- Keep Explain capture usable for long collection names by shortening only the record's display name while preserving the full namespace and timestamp.
+- Reject impossible calendar dates and invalid clock values in typed query parameters instead of silently normalizing them to another date; preserve valid leap days and explicit UTC offsets.
 - Keep download retry/fallback and verification progress distinct, reserving 100% for a verified installer instead of replaying the percentage bar.
 - Confirm connection/tab closure before update restart, save Shell drafts before closing tabs, and preserve the workspace on cancellation or draft-save failure.
 

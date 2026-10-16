@@ -410,7 +410,7 @@ try {
       await active().locator(".grid-cell.type-numberLong").first().click();
       await expect(
         active().locator(".grid-cell.selected-cell .cell-type-badge"),
-      ).toContainText("Int64");
+      ).toHaveText("Long");
       await shot("05-default-table-dark-zh");
     },
   );
@@ -833,6 +833,73 @@ try {
           ),
         )
         .toBe(1);
+    },
+  );
+
+  await check(
+    "native custom colors and view settings preview, cancel and save",
+    async () => {
+      await resize(1480, 960);
+      const before = await settingsSnapshot();
+      await openPreferences();
+      await section("appearance");
+      await dialog()
+        .getByRole("tab", { name: "Custom colors", exact: true })
+        .click();
+      await dialog().getByLabel("Sidebar HEX", { exact: true }).fill("#234567");
+      await expect(page.locator(".sidebar")).toHaveCSS(
+        "background-color",
+        "rgb(35, 69, 103)",
+      );
+      assert.deepEqual(
+        (await settingsSnapshot()).themeOverrides,
+        before.themeOverrides,
+      );
+      await section("editor");
+      await dialog().getByLabel("table Font size", { exact: true }).fill("16");
+      await dialog()
+        .getByLabel("table Line height", { exact: true })
+        .fill("26");
+      await cancelPreferences();
+      assert.deepEqual(
+        (await settingsSnapshot()).viewSettings,
+        before.viewSettings,
+      );
+      await expect(page.locator("html")).not.toHaveAttribute(
+        "style",
+        /--sidebar-background: #234567/,
+      );
+      await openPreferences();
+      await section("appearance");
+      await dialog()
+        .getByRole("tab", { name: "Custom colors", exact: true })
+        .click();
+      await dialog().getByLabel("Sidebar HEX", { exact: true }).fill("#234567");
+      await section("editor");
+      await dialog().getByLabel("table Font size", { exact: true }).fill("16");
+      await dialog()
+        .getByLabel("table Line height", { exact: true })
+        .fill("26");
+      await dialog()
+        .getByRole("tablist", { name: "View typography" })
+        .getByRole("tab", { name: "JSON", exact: true })
+        .click();
+      await dialog()
+        .getByLabel("json Indent spaces", { exact: true })
+        .selectOption("8");
+      await savePreferences();
+      const saved = await settingsSnapshot();
+      assert.equal(saved.themeOverrides.dark.sidebar, "#234567");
+      assert.equal(saved.viewSettings.table.fontSize, 16);
+      assert.equal(saved.viewSettings.table.lineHeight, 26);
+      assert.equal(saved.viewSettings.json.tabWidth, 8);
+      await openPreferences();
+      await section("editor");
+      await expect(
+        dialog().getByLabel("table Font size", { exact: true }),
+      ).toHaveValue("16");
+      await shot("15-native-custom-view-settings");
+      await cancelPreferences();
     },
   );
 

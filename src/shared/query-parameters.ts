@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { csvValue, encode, object } from "./bson";
+import { csvValue, encode, object, parseIsoDate } from "./bson";
 
 export const parameterTypes = [
   "string",
@@ -61,6 +61,11 @@ export function parameterizedDocument(
           )
         )
           throw new Error("Use an ISO date with Z or an explicit UTC offset");
+        if (param.type === "date")
+          return parseIsoDate(
+            values[param.name].toUpperCase(),
+            "Date parameter",
+          );
         return csvValue(values[param.name], param.type);
       } catch (error) {
         throw new Error(`${param.name}: ${(error as Error).message}`);

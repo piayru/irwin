@@ -77,7 +77,7 @@ Collection「更多 → 查詢交付」與 Aggregation「查詢交付」可產�
 
 「團隊查詢包」可選取 Find／Shell 查詢與 Pipeline，保留名稱、分組、說明和參數。預設省略來源 metadata，可選擇納入連線名稱與 namespace。匯入前顯示逐項可展開的預覽，按「確認匯入」才交易式新增；所有 ID 重新產生，不覆蓋同名或同 ID 項目，不會自動連線或執行。格式為 `irwin-query-bundle` 第 1 版，總大小最多 8 MB，查詢與 Pipeline 各最多 500 項。套用時使用目前分頁的環境；Shell 中寫死的 namespace 需自行檢查。
 
-Find 與 Pipeline 儲存視窗可定義參數，例如 Filter `{_id: {$irwinParam: "owner"}}`，參數名稱 `owner`、型別 `objectId`。套用時填入值，再按「套用條件」；只替換完整 placeholder 物件，不替換字串，不執行 JavaScript。支援 string、int32、int64、double、decimal、boolean、date、objectId 與 BSON-aware json；日期需 ISO 格式並附 `Z` 或 UTC offset。名稱需以英文字母起首，後接字母、數字或底線。查詢包保留實際條件與 Shell 原文，分享前應檢查是否含需移除的資料值。
+Find 與 Pipeline 儲存視窗可定義參數，例如 Filter `{_id: {$irwinParam: "owner"}}`，參數名稱 `owner`、型別 `objectId`。套用時填入值，再按「套用條件」；只替換完整 placeholder 物件，不替換字串，不執行 JavaScript。支援 string、int32、int64、double、decimal、boolean、date、objectId 與 BSON-aware json；日期需 ISO 格式並附 `Z` 或 UTC offset，且日曆日期與時間必須有效，例如 2 月 30 日會被拒絕，不會自動改成 3 月的日期。名稱需以英文字母起首，後接字母、數字或底線。查詢包保留實際條件與 Shell 原文，分享前應檢查是否含需移除的資料值。
 
 ## 完整 Pipeline 與階段除錯
 

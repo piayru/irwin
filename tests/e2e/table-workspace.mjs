@@ -44,8 +44,9 @@ const checks = [],
 const active = () => page.locator(".workspace-panel.visible");
 const cell = (text) =>
   active()
-    .locator(".grid-cell")
+    .locator(".cell-preview")
     .filter({ hasText: new RegExp(`^${text}$`) })
+    .locator("../..")
     .first();
 const panel = () =>
   active().getByRole("complementary", { name: "Column settings" });
@@ -374,8 +375,9 @@ try {
     "Two frozen columns align synchronously and stay above long previews during both scroll axes",
     async () => {
       await active()
-        .locator(".grid-cell")
+        .locator(".cell-preview")
         .filter({ hasText: /^Document 0:/ })
+        .locator("../..")
         .click();
       const immediate = await active()
         .locator(".table-scroll")
@@ -445,10 +447,14 @@ try {
       await active()
         .locator(".grid-row")
         .filter({
-          has: page.locator(".grid-cell").filter({ hasText: /^qa-000$/ }),
+          has: page
+            .locator(".cell-preview")
+            .filter({ hasText: /^qa-000$/ })
+            .locator("../.."),
         })
-        .locator(".grid-cell")
+        .locator(".cell-preview")
         .filter({ hasText: /^async$/ })
+        .locator("../..")
         .click();
       await page.keyboard.press("ArrowRight");
       const selected = active().locator(".selected-cell");

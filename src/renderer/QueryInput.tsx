@@ -9,6 +9,7 @@ import {
   querySuggestionKeyIntent,
 } from "./query-editing";
 import { Modal, useUi, message } from "./ui";
+import { resolveViewStyles } from "./appearance";
 import {
   mongoSuggestions,
   type CompletionContext,
@@ -36,7 +37,9 @@ export function QueryInput({
   onResizeStart?(event: PointerEvent): void;
   onResizeStep?(delta: number): void;
 }) {
-  const { t, theme, tabWidth, fontFamily, fontSize } = useUi();
+  const ui = useUi();
+  const { t, theme, fontFamily, fontSize } = ui;
+  const { tabWidth } = resolveViewStyles(ui).json;
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState<string>();

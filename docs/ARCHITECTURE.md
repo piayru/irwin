@@ -27,7 +27,7 @@ AI provider keys stay in Electron main and are encrypted by `safeStorage`; rende
 
 每個 Driver pool 上限 5 連線；cursor 預設 100 筆／批、單批約 8 MB，閒置五分鐘關閉。Renderer 最多保留約 24 MB／1,000 筆；一份超大文件本身仍可能超過單批軟上限。Table 同時虛擬化列與欄，Tree 延遲展開，JSON 編輯器限定每頁 100 筆並保留實例。傳輸最多同時兩個工作。
 
-SQLite schema 使用 `user_version=6`，profiles 與 secrets 分欄。safeStorage 沒有安全後端時不保存秘密，Linux `basic_text` 明確禁止。SSH tunnel 共用生命週期，私鑰不複製到 SQLite。BSON 工具透過權限受限的臨時 config 檔接收憑證，不放在程序參數列；結束後刪除。
+SQLite schema 使用 `user_version=7`，profiles 與 secrets 分欄。safeStorage 沒有安全後端時不保存秘密，Linux `basic_text` 明確禁止。SSH tunnel 共用生命週期，私鑰不複製到 SQLite。BSON 工具透過權限受限的臨時 config 檔接收憑證，不放在程序參數列；結束後刪除。
 
 測試使用真實 MongoDB 程序、真實 ssh2 server、測試 CA 及 Playwright Electron。資料單元測試不代替遠端 Atlas／Cosmos 與各作業系統實機驗收。
 

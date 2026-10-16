@@ -34,7 +34,12 @@ export class DatabaseService {
   private usersRoles = new UsersRolesService();
   connections = new Map<
     string,
-    { client: MongoClient; profile: Profile; version: string }
+    {
+      client: MongoClient;
+      profile: Profile;
+      version: string;
+      versionTask?: Promise<string>;
+    }
   >();
   cursors = new Map<
     string,
@@ -47,6 +52,10 @@ export class DatabaseService {
       abort: AbortController;
     }
   >();
+  private startingCursors = new Map<
+    string,
+    { target: QueryInput | AggregationInput; abort: AbortController }
+  >();
   private pending = new Map<string, Promise<any>>();
   async connect(resolved: ResolvedConnection) {
     const id = resolved.profile.id;
@@ -55,15 +64,33 @@ export class DatabaseService {
     this.pending.set(id, task);
     return task;
   }
-  private async detectVersion(id: string, client: MongoClient) {
+  private async detectVersion(
+    id: string,
+    client: MongoClient,
+  ): Promise<string> {
     try {
-      const version = (await client.db().admin().command({ buildInfo: 1 }))
-        .version;
+      const version = String(
+        (await client.db().admin().command({ buildInfo: 1 })).version ||
+          "unknown",
+      );
       const current = this.connections.get(id);
       if (current?.client === client) current.version = version;
+      return version;
     } catch {
       // Version detection is advisory and must not delay a usable connection.
+      return "unknown";
     }
+  }
+  private async resolveVersion(id: string): Promise<string> {
+    const current = this.get(id);
+    if (current.version !== "unknown" || !current.versionTask)
+      return current.version;
+    return Promise.race([
+      current.versionTask,
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve(current.version), 1000),
+      ),
+    ]);
   }
   private async open({ profile, uri, options }: ResolvedConnection) {
     await this.close(profile.id);
@@ -78,8 +105,14 @@ export class DatabaseService {
     try {
       await client.connect();
       await client.db(profile.database || "admin").command({ ping: 1 });
-      this.connections.set(profile.id, { client, profile, version: "unknown" });
-      void this.detectVersion(profile.id, client);
+      const entry: {
+        client: MongoClient;
+        profile: Profile;
+        version: string;
+        versionTask?: Promise<string>;
+      } = { client, profile, version: "unknown" };
+      this.connections.set(profile.id, entry);
+      entry.versionTask = this.detectVersion(profile.id, client);
       return {
         connected: true,
         version: "unknown",
@@ -98,7 +131,7 @@ export class DatabaseService {
   }
   async close(id: string) {
     await Promise.all(
-      [...this.cursors]
+      [...this.cursors, ...this.startingCursors]
         .filter(([, c]) => c.target.connectionId === id)
         .map(([key]) => this.cancel(key)),
     );
@@ -168,100 +201,116 @@ export class DatabaseService {
         : undefined,
     };
   }
+  private async startRead(
+    input: QueryInput | AggregationInput,
+    kind: "find" | "aggregation",
+    createCursor: (
+      version: string,
+      signal: AbortSignal,
+    ) => FindCursor | AggregationCursor,
+  ): Promise<Page> {
+    const cursorId = input.cursorId || randomUUID();
+    if (this.cursors.has(cursorId) || this.startingCursors.has(cursorId))
+      throw new Error("Duplicate cursor id");
+    const abort = new AbortController();
+    const pending = { target: input, abort };
+    // Reserve cancellation and identity before version detection can yield.
+    this.startingCursors.set(cursorId, pending);
+    try {
+      const version = await this.resolveVersion(input.connectionId);
+      abort.signal.throwIfAborted();
+      const cursor = createCursor(version, abort.signal);
+      this.cursors.set(cursorId, {
+        cursor,
+        target: input,
+        kind,
+        busy: false,
+        touched: Date.now(),
+        abort,
+      });
+      this.startingCursors.delete(cursorId);
+      return await this.next(cursorId);
+    } catch (error) {
+      if (
+        this.cursors.get(cursorId)?.abort === abort ||
+        this.startingCursors.get(cursorId) === pending
+      )
+        await this.cancel(cursorId);
+      throw error;
+    } finally {
+      if (this.startingCursors.get(cursorId) === pending)
+        this.startingCursors.delete(cursorId);
+    }
+  }
   async run(input: QueryInput): Promise<Page> {
     const { client } = this.get(input.connectionId);
-    const abort = new AbortController();
-    const cursor = client
-      .db(input.database)
-      .collection(input.collection)
-      .find(object(input.filter), {
-        projection: object(input.projection),
-        sort: object(input.sort),
-        skip: input.skip,
-        batchSize: input.batchSize,
-        maxTimeMS: input.maxTimeMS,
-        signal: abort.signal,
-        ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
-        ...(input.collation?.trim()
-          ? { collation: object(input.collation) as any }
-          : {}),
-      });
-    const cursorId = input.cursorId || randomUUID();
-    if (this.cursors.has(cursorId)) throw new Error("Duplicate cursor id");
-    this.cursors.set(cursorId, {
-      cursor,
-      target: input,
-      kind: "find",
-      busy: false,
-      touched: Date.now(),
-      abort,
-    });
-    try {
-      return await this.next(cursorId);
-    } catch (e) {
-      await this.cancel(cursorId);
-      throw e;
-    }
+    return this.startRead(input, "find", (_version, signal) =>
+      client
+        .db(input.database)
+        .collection(input.collection)
+        .find(object(input.filter), {
+          projection: object(input.projection),
+          sort: object(input.sort),
+          skip: input.skip,
+          batchSize: input.batchSize,
+          maxTimeMS: input.maxTimeMS,
+          signal,
+          ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
+          ...(input.collation?.trim()
+            ? { collation: object(input.collation) as any }
+            : {}),
+        }),
+    );
   }
   async aggregate(
     input: AggregationInput,
     mode: "run" | "preview" = "run",
   ): Promise<Page> {
-    const { client, profile, version } = this.get(input.connectionId);
-    const full = compileReadOnlyPipeline(input.stages, version);
-    const pipeline =
-      mode === "preview"
-        ? [
-            ...compileReadOnlyPipeline(
-              input.stages.slice(
-                0,
-                (input.throughIndex ?? input.stages.length - 1) + 1,
-              ),
-              version,
-            ),
-            { $limit: 20 },
-          ]
-        : full;
-    assertWritable(
-      profile,
-      mode === "preview" ? "aggregations.preview" : "aggregations.run",
-    );
-    const abort = new AbortController();
-    const cursor = client
-      .db(input.database)
-      .collection(input.collection)
-      .aggregate(pipeline, {
-        batchSize: mode === "preview" ? 20 : input.batchSize,
-        maxTimeMS:
+    const { client, profile } = this.get(input.connectionId);
+    return this.startRead(
+      mode === "preview" ? { ...input, batchSize: 20 } : input,
+      "aggregation",
+      (version, signal) => {
+        const full = compileReadOnlyPipeline(input.stages, version);
+        const pipeline =
           mode === "preview"
-            ? Math.min(input.maxTimeMS, 10000)
-            : input.maxTimeMS,
-        allowDiskUse: false,
-        ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
-        ...(input.collation?.trim()
-          ? { collation: object(input.collation) as any }
-          : {}),
-        signal: abort.signal,
-      });
-    const cursorId = input.cursorId || randomUUID();
-    if (this.cursors.has(cursorId)) throw new Error("Duplicate cursor id");
-    this.cursors.set(cursorId, {
-      cursor,
-      target: mode === "preview" ? { ...input, batchSize: 20 } : input,
-      kind: "aggregation",
-      busy: false,
-      touched: Date.now(),
-      abort,
-    });
-    try {
-      return await this.next(cursorId);
-    } catch (error) {
-      await this.cancel(cursorId);
-      throw error;
-    }
+            ? [
+                ...compileReadOnlyPipeline(
+                  input.stages.slice(
+                    0,
+                    (input.throughIndex ?? input.stages.length - 1) + 1,
+                  ),
+                  version,
+                ),
+                { $limit: 20 },
+              ]
+            : full;
+        assertWritable(
+          profile,
+          mode === "preview" ? "aggregations.preview" : "aggregations.run",
+        );
+        return client
+          .db(input.database)
+          .collection(input.collection)
+          .aggregate(pipeline, {
+            batchSize: mode === "preview" ? 20 : input.batchSize,
+            maxTimeMS:
+              mode === "preview"
+                ? Math.min(input.maxTimeMS, 10000)
+                : input.maxTimeMS,
+            allowDiskUse: false,
+            ...(input.hint?.trim() ? { hint: object(input.hint) } : {}),
+            ...(input.collation?.trim()
+              ? { collation: object(input.collation) as any }
+              : {}),
+            signal,
+          });
+      },
+    );
   }
   async explainAggregation(input: AggregationInput): Promise<string> {
-    const { client, profile, version } = this.get(input.connectionId);
+    const { client, profile } = this.get(input.connectionId);
+    const version = await this.resolveVersion(input.connectionId);
     const pipeline = compileReadOnlyPipeline(input.stages, version);
     assertWritable(profile, "aggregations.explain");
     const cursor = client
@@ -317,7 +366,7 @@ export class DatabaseService {
         "Index definitions unavailable (permissions or provider capabilities)",
       );
     }
-    const serverVersion = this.get(input.connectionId).version;
+    const serverVersion = await this.resolveVersion(input.connectionId);
     if (serverVersion === "unknown")
       warnings.push("Server version unavailable");
     return { capturedAt, durationMS, plan, indexes, serverVersion, warnings };
@@ -363,6 +412,7 @@ export class DatabaseService {
     }
   }
   async cancel(id: string) {
+    this.startingCursors.get(id)?.abort.abort();
     const state = this.cursors.get(id);
     this.cursors.delete(id);
     state?.abort.abort();
@@ -396,13 +446,13 @@ export class DatabaseService {
             p.username,
           );
         case "usersRoles.createUser":
-          return this.usersRoles.createUser(client, p);
+          return this.usersRoles.createUser(client, p, profile);
         case "usersRoles.setPassword":
-          return this.usersRoles.setPassword(client, p);
+          return this.usersRoles.setPassword(client, p, profile);
         case "usersRoles.grantRole":
-          return this.usersRoles.grantRole(client, p);
+          return this.usersRoles.grantRole(client, p, profile);
         case "usersRoles.revokeRole":
-          return this.usersRoles.revokeRole(client, p);
+          return this.usersRoles.revokeRole(client, p, profile);
         case "usersRoles.dropUser":
           return this.usersRoles.dropUser(client, profile, p);
       }
@@ -559,7 +609,7 @@ export class DatabaseService {
       case "documents.update": {
         const capability = capabilities(
           profile.provider,
-          this.get(p.connectionId).version,
+          await this.resolveVersion(p.connectionId),
         );
         if (!capability.conditionalEditing)
           throw new Error(capability.conditionalEditingReason);
@@ -607,7 +657,7 @@ export class DatabaseService {
       case "documents.replace": {
         const capability = capabilities(
           profile.provider,
-          this.get(p.connectionId).version,
+          await this.resolveVersion(p.connectionId),
         );
         if (!capability.conditionalEditing)
           throw new Error(capability.conditionalEditingReason);

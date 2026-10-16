@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { appearanceVariables, appearanceVariableNames } from "./appearance";
 import {
   Database,
   Plus,
@@ -465,15 +466,13 @@ export default function App() {
     const root = document.documentElement;
     root.style.setProperty("--font-family", effectiveSettings.fontFamily);
     root.style.setProperty("--tab-width", String(effectiveSettings.tabWidth));
-    root.style.setProperty("--bson-string", effectiveSettings.colors.string);
-    root.style.setProperty("--bson-number", effectiveSettings.colors.number);
-    root.style.setProperty(
-      "--bson-object-id",
-      effectiveSettings.colors.objectId,
-    );
-    root.style.setProperty("--bson-boolean", effectiveSettings.colors.boolean);
-    root.style.setProperty("--bson-null", effectiveSettings.colors.null);
-  }, [effectiveSettings]);
+    for (const variable of appearanceVariableNames)
+      root.style.removeProperty(variable);
+    for (const [variable, color] of Object.entries(
+      appearanceVariables(effectiveSettings, resolvedTheme),
+    ))
+      root.style.setProperty(variable, color);
+  }, [effectiveSettings, resolvedTheme]);
   useEffect(() => {
     void api
       .request("settings.zoom", { value: effectiveSettings.uiScale })
@@ -574,6 +573,33 @@ export default function App() {
   };
   const toggle = (key: string) =>
     setExpanded((old) => ({ ...old, [key]: !old[key] }));
+  const indexedDbKeys = useRef(new Set<string>());
+  useEffect(() => {
+    if (palette !== "collections" && !search.trim()) return;
+    for (const profile of profiles) {
+      if (!connected.includes(profile.id)) continue;
+      const dbNames = (dbs[profile.id] || [profile.database])
+        .filter((db) => Boolean(db) && !["admin", "local", "config"].includes(db))
+        .slice(0, 20);
+      for (const db of dbNames) {
+        const key = `${profile.id}/${db}`;
+        if (collections[key] || indexedDbKeys.current.has(key)) continue;
+        indexedDbKeys.current.add(key);
+        void api
+          .request("metadata.collections", {
+            connectionId: profile.id,
+            database: db,
+          })
+          .then((names) => {
+            if (!connectedRef.current.includes(profile.id)) return;
+            setCollections((old) => (old[key] ? old : { ...old, [key]: names }));
+          })
+          .catch(() => {
+            indexedDbKeys.current.delete(key);
+          });
+      }
+    }
+  }, [palette, search, profiles, connected, dbs, collections]);
   const openConnection = async (profile: Profile, force = false) => {
     if (connecting.includes(profile.id)) return;
     if (connected.includes(profile.id) && !force) {
@@ -2289,6 +2315,52 @@ export default function App() {
                             }}
                           >
                             {t("在 Shell 開啟", "Open in Shell")}
+                          </button>
+                          <button
+                            onClick={() => {
+                              const profile = profiles.find(
+                                (p) => p.id === item.connectionId,
+                              );
+                              void api
+                                .request("savedQueries.save", {
+                                  id: crypto.randomUUID(),
+                                  name: (
+                                    item.label ||
+                                    `${item.database}.${item.collection || "shell"}`
+                                  ).slice(0, 160),
+                                  group: item.favorite ? "Favorites" : "",
+                                  description: "",
+                                  parameters: [],
+                                  source: {
+                                    connectionName: profile?.name || "",
+                                    database: item.database,
+                                    collection: item.collection,
+                                  },
+                                  query: {
+                                    mode: "shell",
+                                    filter: "{}",
+                                    sort: "{}",
+                                    projection: "{}",
+                                    batchSize: 100,
+                                    code: item.code,
+                                  },
+                                })
+                                .then(() => {
+                                  setSavedQueryRevision((value) => value + 1);
+                                  window.dispatchEvent(
+                                    new Event("irwin:query-library-changed"),
+                                  );
+                                  notify(
+                                    t(
+                                      "已轉存至「已儲存查詢」",
+                                      "Saved to query library",
+                                    ),
+                                  );
+                                })
+                                .catch((e) => notify(message(e), true));
+                            }}
+                          >
+                            {t("轉為已儲存查詢", "Save to query library")}
                           </button>
                           <button
                             onClick={() =>

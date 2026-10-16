@@ -418,6 +418,38 @@ try {
   checks.push(
     "diagnostics and imported query libraries survive a real Electron restart",
   );
+  const longCollection = `orders_${"x".repeat(150)}`;
+  await client.db("workflow_qa").collection(longCollection).insertOne({ n: 1 });
+  const longDiagnostic = await page.evaluate(
+    (collection) =>
+      window.workbench.request("diagnostics.capture", {
+        kind: "find",
+        input: {
+          connectionId: "workflow-qa",
+          database: "workflow_qa",
+          collection,
+          filter: "{}",
+          sort: "{}",
+          projection: "{}",
+          skip: 0,
+          batchSize: 100,
+          maxTimeMS: 10000,
+        },
+      }),
+    longCollection,
+  );
+  assert.equal(longDiagnostic.source.collection, longCollection);
+  assert.ok(longDiagnostic.name.length <= 160);
+  assert.ok(longDiagnostic.name.endsWith(longDiagnostic.capturedAt));
+  const storedDiagnostics = await page.evaluate(() =>
+    window.workbench.request("diagnostics.list", {}),
+  );
+  assert.ok(
+    storedDiagnostics.some((record) => record.id === longDiagnostic.id),
+  );
+  checks.push(
+    "diagnostics for long collection names save without truncating the namespace",
+  );
   assert.deepEqual(
     errors.filter(
       (error) =>

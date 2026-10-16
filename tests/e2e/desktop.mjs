@@ -256,7 +256,10 @@ try {
   await expect(countButton).toBeVisible();
   await page.getByRole("button", { name: "執行", exact: true }).click();
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Lovelace$/ })
+      .locator("../.."),
   ).toBeVisible({ timeout: 30000 });
   const optionsButton = page.getByRole("button", { name: "查詢選項" });
   await optionsButton.click();
@@ -356,12 +359,15 @@ try {
     .click();
   await expect(page.locator(".grid-row").nth(1)).toContainText("Alan Turing");
   const alanNameCell = page
-    .locator(".grid-cell")
+    .locator(".cell-preview")
     .filter({ hasText: /^Alan Turing$/ })
+    .locator("../..")
     .first();
   await alanNameCell.click();
   await page.keyboard.press("ArrowRight");
-  await expect(page.locator(".grid-cell.selected-cell")).toHaveText("Research");
+  await expect(
+    page.locator(".grid-cell.selected-cell .cell-preview"),
+  ).toHaveText("Research");
   checks.push("table sort and keyboard navigation");
   expect(
     await page
@@ -471,8 +477,9 @@ try {
   expect(previewStyle.whiteSpace).toBe("normal");
   checks.push("selected long-cell preview");
   const shortCell = page
-    .locator(".grid-cell")
-    .filter({ hasText: /^Research$/ })
+    .locator(".cell-preview")
+    .filter({ hasText: /^98$/ })
+    .locator("../..")
     .first();
   await shortCell.click();
   const shortPreviewStyle = await shortCell
@@ -548,7 +555,10 @@ try {
     })
     .click();
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Lovelace$/ })
+      .locator("../.."),
   ).toBeVisible();
   checks.push("home navigation preserves open query results");
   await page
@@ -564,7 +574,10 @@ try {
   await page.getByLabel("FILTER", { exact: true }).fill("{}");
   await page.getByRole("button", { name: "執行", exact: true }).click();
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Lovelace$/ })
+      .locator("../.."),
   ).toBeVisible();
   checks.push("stale and zero-result query states are distinct");
   await expect(page.getByRole("grid", { name: "查詢結果" })).toBeVisible();
@@ -728,7 +741,7 @@ try {
         .locator(".segmented > .active")
         .evaluate((element) => getComputedStyle(element).color),
     )
-    .toBe("rgb(192, 59, 46)");
+    .toBe("rgb(199, 62, 48)");
   const lightPalette = await page.locator("html").evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -823,7 +836,10 @@ try {
     .toContain("Ada Lovelace");
   await expect(page.locator(".job-row")).toContainText("3 筆成功");
   checks.push("loaded and streaming query export scopes");
-  const cell = page.locator(".grid-cell").filter({ hasText: /^Ada Lovelace$/ });
+  const cell = page
+    .locator(".cell-preview")
+    .filter({ hasText: /^Ada Lovelace$/ })
+    .locator("../..");
   await expect(cell).toBeVisible();
   await cell.click();
   await expect(cell).toHaveClass(/selected-cell/);
@@ -870,7 +886,10 @@ try {
   await page.getByRole("textbox", { name: "Edit cell" }).fill("Ada Updated");
   await page.getByRole("textbox", { name: "Edit cell" }).press("Enter");
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Updated$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Updated$/ })
+      .locator("../.."),
   ).toBeVisible();
   expect(
     await client
@@ -937,7 +956,10 @@ try {
     .click();
   await page.getByRole("button", { name: "儲存", exact: true }).click();
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Whole$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Whole$/ })
+      .locator("../.."),
   ).toBeVisible();
   expect(
     await client
@@ -994,7 +1016,10 @@ try {
   checks.push("copy document");
   await expect(page.locator("dialog")).toHaveCount(0);
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Ada Copy$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Ada Copy$/ })
+      .locator("../.."),
   ).toBeVisible();
   await page.screenshot({ path: ".runtime/screenshots/table.png" });
   await page.getByRole("button", { name: "Tree", exact: true }).click();
@@ -1051,11 +1076,130 @@ try {
   ).toBe(0);
   await page.getByRole("button", { name: "Table", exact: true }).click();
   await page.getByRole("button", { name: "自由命令", exact: true }).click();
+  const shellWriteCollection = client
+    .db("workbench_demo")
+    .collection("shell_write_display");
+  await shellWriteCollection.insertOne({
+    cardId: "ips-convert",
+    providerConfig: { ipsConfig: { recipes: [] } },
+  });
+  const shellWriteCode =
+    'db.getCollection("shell_write_display").updateOne({cardId:"ips-convert"}, {$set:{"providerConfig.ipsConfig.ruleSetVersion":"healthbank-ips-v7"},$addToSet:{"providerConfig.ipsConfig.recipes":{section:"results",type:"flatten"}}})';
+  const runShellCode = async (code) => {
+    await page.locator(".shell-editor .monaco-editor").click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.insertText(code);
+    await page.getByRole("button", { name: "執行", exact: true }).click();
+    // A fresh mongosh utility process can take longer on a cold Windows launch.
+    await expect(
+      page.getByRole("button", { name: "執行", exact: true }),
+    ).toBeEnabled({ timeout: 90000 });
+  };
+  const writeCountCell = async (field) => {
+    const header = page
+      .locator(".grid-heading")
+      .filter({ hasText: new RegExp(`^${field}$`) });
+    const column = await header.getAttribute("aria-colindex");
+    return page.locator(`.grid-cell[aria-colindex="${column}"] .cell-preview`);
+  };
+  await runShellCode(shellWriteCode);
+  await expect(page.locator(".grid-row")).toHaveCount(1);
+  await expect(
+    page.getByText("沒有符合條件的文件", { exact: true }),
+  ).toHaveCount(0);
+  await expect(await writeCountCell("matchedCount")).toHaveText("1");
+  await expect(await writeCountCell("modifiedCount")).toHaveText("1");
+  await expect(page.locator("details.output")).toHaveCount(0);
+  await runShellCode(shellWriteCode);
+  await expect(await writeCountCell("matchedCount")).toHaveText("1");
+  await expect(await writeCountCell("modifiedCount")).toHaveText("0");
+  await runShellCode(
+    'db.shell_write_display.updateOne({cardId:"missing"},{$set:{active:true}})',
+  );
+  await expect(await writeCountCell("matchedCount")).toHaveText("0");
+  await expect(await writeCountCell("modifiedCount")).toHaveText("0");
+  assert.deepEqual(
+    (await shellWriteCollection.findOne({ cardId: "ips-convert" }))
+      .providerConfig,
+    {
+      ipsConfig: {
+        ruleSetVersion: "healthbank-ips-v7",
+        recipes: [{ section: "results", type: "flatten" }],
+      },
+    },
+  );
+  checks.push(
+    "free command shows matched, modified and no-op write results without opening Output",
+  );
+  await runShellCode("use shell_context_desktop");
+  await expect(page.locator(".breadcrumb")).toContainText(
+    "shell_context_desktop",
+  );
+  await expect(page.locator(".breadcrumb strong")).toHaveCount(0);
+  await runShellCode('db.probe.insertOne({_id:"context-check"})');
+  assert.ok(
+    await client
+      .db("shell_context_desktop")
+      .collection("probe")
+      .findOne({ _id: "context-check" }),
+  );
+  assert.equal(
+    await client
+      .db("workbench_demo")
+      .collection("probe")
+      .findOne({ _id: "context-check" }),
+    null,
+  );
+  const contextualHistory = await page.evaluate(() =>
+    window.workbench.request("history.list", {}),
+  );
+  assert.equal(
+    contextualHistory.find(
+      (item) => item.code === 'db.probe.insertOne({_id:"context-check"})',
+    ).database,
+    "shell_context_desktop",
+  );
+  await runShellCode(
+    'db = db.getSiblingDB("shell_context_error"); throw new Error("context probe")',
+  );
+  await expect(page.locator(".breadcrumb")).toContainText(
+    "shell_context_error",
+  );
+  await runShellCode("db.getName()");
+  await expect(page.locator(".shell-command-result")).toContainText(
+    "shell_context_error",
+  );
+  await page.locator(".shell-editor .monaco-editor").click();
+  await page.keyboard.press("Control+a");
+  await page.keyboard.insertText("await new Promise(() => {})");
+  await page.getByRole("button", { name: "執行", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "停止", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "停止", exact: true }).click();
+  await expect(page.locator(".output")).toContainText("輸出");
+  await expect(
+    page.getByRole("button", { name: "執行", exact: true }),
+  ).toBeEnabled({ timeout: 30000 });
+  await runShellCode("db.getName()");
+  await expect(page.locator(".shell-command-result")).toContainText(
+    "shell_context_error",
+  );
+  await runShellCode("use workbench_demo");
+  await expect(page.locator(".breadcrumb")).toContainText("workbench_demo");
+  checks.push(
+    "Shell database context, history and cancellation remain accurate after switching and script errors",
+  );
   await page.locator(".shell-editor .monaco-editor").click();
   await page.keyboard.press("Control+a");
   await page.keyboard.insertText("1+2");
   await page.getByRole("button", { name: "執行", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "執行", exact: true }),
+  ).toBeEnabled({ timeout: 30000 });
   await expect(page.locator("details.output")).toBeVisible();
+  await expect(page.locator("details.output")).not.toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "展開輸出", exact: true }).click();
   await expect(page.locator("details.output")).toHaveCSS("resize", "vertical");
   const output = page.locator("details.output");
   const outputHandle = output.locator(".output-resize-handle");
@@ -1143,7 +1287,10 @@ try {
     .getByRole("button", { name: "儲存", exact: true })
     .click();
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^Katherine Johnson$/ }),
+    page
+      .locator(".cell-preview")
+      .filter({ hasText: /^Katherine Johnson$/ })
+      .locator("../.."),
   ).toBeVisible();
   expect(
     await client
@@ -1386,6 +1533,7 @@ try {
     .getByRole("button", { name: "Shell", exact: true })
     .click();
   const draftEditor = page.locator(".shell-editor .monaco-editor");
+  await runShellCode("use shell_draft_context");
   await draftEditor.click();
   await page.keyboard.press("Control+a");
   await page.keyboard.insertText("const recoveryCheck = true;");
@@ -1406,7 +1554,10 @@ try {
     )
     .toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: "const recoveryCheck = true;" }),
+        expect.objectContaining({
+          code: "const recoveryCheck = true;",
+          database: "shell_draft_context",
+        }),
       ]),
     );
   await page.getByRole("button", { name: /草稿 1/ }).click();
@@ -1421,6 +1572,9 @@ try {
   await expect(page.locator(".shell-editor .view-lines")).toContainText(
     "recoveryCheck",
   );
+  await expect(
+    page.locator(".workspace-panel.visible .breadcrumb"),
+  ).toContainText("shell_draft_context");
   await page.getByRole("button", { name: "執行", exact: true }).click();
   // A fresh Shell utility process can take longer than the storage assertion.
   // Wait for its execution to finish before checking the resulting draft state.
@@ -1586,6 +1740,25 @@ try {
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   checks.push("selectable color themes");
+  for (const [theme, scheme] of [
+    ["midnight", "dark"],
+    ["graphite", "dark"],
+    ["lavender", "light"],
+    ["paper", "light"],
+  ]) {
+    await setTheme(theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    expect(
+      await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource),
+    ).toBe(scheme);
+    expect(
+      (await page.evaluate(() => window.workbench.request("settings.get", {})))
+        .theme,
+    ).toBe(theme);
+  }
+  checks.push(
+    "four additional palettes persist with matching native window schemes",
+  );
   await setTheme("light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.screenshot({ path: ".runtime/screenshots/light.png" });

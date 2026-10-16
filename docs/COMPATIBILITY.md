@@ -10,11 +10,20 @@ macOS/Ubuntu acceptance and live Cosmos DB acceptance still require actual
 target environments. Packaging/CI results must be recorded for the exact
 release commit and installer hashes, separately from earlier local candidates.
 
-The 2026-10-15 working tree passed 470 automated tests across 78 files, all 8
+The earlier 2026-10-15 baseline passed 470 automated tests across 78 files, all 8
 required renderer scenarios in Linux Chromium, and all 59 Windows Electron
 desktop checks against a production build. These use disposable application and
 database fixtures. They do not establish exact downloaded-installer installation,
 older-release upgrade, signing prompts or native macOS/Ubuntu acceptance.
+
+The subsequent six-feature recheck fixed long-collection Explain record naming
+and strict calendar validation for typed date parameters. It passed 476 tests
+across 78 files, 10 Electron developer workflow checks, all 59 Windows desktop
+checks, and 27 WSL Docker deployment checks with three verified cleanups.
+The real renderer notification scenario also passed manual dismissal and
+five-second expiry for success and errors. These checks used a fresh source
+build and isolated data; exact native installer and cloud-account acceptance
+remain separate requirements.
 
 ## Desktop operating systems
 

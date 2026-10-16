@@ -64,6 +64,7 @@ try {
       window.counts = [];
       window.notices = [];
       window.reads = [];
+      window.queryResult = { rows: [], hasMore: false };
       window.workbench = {
         subscribe() {
           return () => {};
@@ -75,7 +76,7 @@ try {
             );
           if (command === "queries.run") {
             window.reads.push(payload);
-            return { rows: [], hasMore: false, cursorId: "qa-cursor" };
+            return { ...window.queryResult, cursorId: payload.cursorId };
           }
           return undefined;
         },
@@ -158,16 +159,83 @@ try {
       ),
       false,
     );
+    // Counts are snapshots: Last page must refresh after additions or deletions.
+    await page.evaluate(() => {
+      window.queryResult = {
+        rows: [{ ejson: '{"_id":"last-page-qa"}', editable: false }],
+        hasMore: true,
+      };
+    });
+    await page.keyboard.press("F5");
+    await expect(page.locator(".grid-row").first()).toBeVisible();
+    await count.click();
+    await page.evaluate(() => window.counts[5].resolve(200));
+    await expect(status).toContainText(
+      language === "en" ? "Matching 200" : "符合 200",
+    );
+    const last = page.getByRole("button", {
+      name: language === "en" ? "Last page" : "最後一頁",
+      exact: true,
+    });
+    await last.click();
+    await expect.poll(() => page.evaluate(() => window.counts.length)).toBe(7);
+    await page.evaluate(() => window.counts[6].resolve(201));
+    await expect
+      .poll(() => page.evaluate(() => window.reads.at(-1).skip))
+      .toBe(200);
+    await expect(status).toContainText(
+      language === "en" ? "Matching 201" : "符合 201",
+    );
+    await last.click();
+    await expect.poll(() => page.evaluate(() => window.counts.length)).toBe(8);
+    await page.evaluate(() => window.counts[7].resolve(99));
+    await expect
+      .poll(() => page.evaluate(() => window.reads.at(-1).skip))
+      .toBe(0);
+    await expect(status).toContainText(
+      language === "en" ? "Matching 99" : "符合 99",
+    );
+    const readsBeforeStaleCount = await page.evaluate(
+      () => window.reads.length,
+    );
+    await last.click();
+    await expect(last).toBeDisabled();
+    await page
+      .getByRole("button", {
+        name: language === "en" ? "Show query" : "返回查詢",
+        exact: true,
+      })
+      .click();
+    await page.getByLabel("FILTER", { exact: true }).fill("{ changed: true }");
+    await page.evaluate(() => window.counts[8].resolve(12345));
+    await expect(count).toBeEnabled();
+    await expect(status).not.toContainText("12345");
+    assert.equal(
+      await page.evaluate(() => window.reads.length),
+      readsBeforeStaleCount,
+    );
+    await last.click();
+    await expect.poll(() => page.evaluate(() => window.counts.length)).toBe(10);
+    await page.evaluate(() =>
+      window.counts[9].reject(new Error("Last page count failed")),
+    );
+    await expect(status.getByRole("alert")).toContainText(
+      "Last page count failed",
+    );
+    assert.equal(
+      await page.evaluate(() => window.reads.length),
+      readsBeforeStaleCount,
+    );
     await count.click();
     await page.evaluate(() => {
       window.unmount();
-      window.counts[5].resolve(17);
+      window.counts.at(-1).resolve(17);
     });
     assert.deepEqual(errors, []);
     await page.close();
   }
   console.log(
-    "PASS count visibility, manual execution, stale completion/error, zero, retry, focus, narrow layout and languages",
+    "PASS count visibility, manual execution, stale completion/error, zero, retry, last page after additions/deletions, focus, narrow layout and languages",
   );
 } finally {
   await browserServer?.kill();

@@ -49,8 +49,9 @@ for (const target of targets) {
       const path = join(dir, item.name);
       if (item.isDirectory()) await collect(path);
       else if (
-        /^(mongodump|mongorestore)(\.exe)?$/.test(item.name) ||
-        /license|notice|readme/i.test(item.name)
+        !item.name.startsWith("._") &&
+        (/^(mongodump|mongorestore)(\.exe)?$/.test(item.name) ||
+          /license|notice|readme/i.test(item.name))
       ) {
         await copyFile(path, join(destination, item.name));
         if (!target.startsWith("win"))

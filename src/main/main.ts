@@ -117,7 +117,36 @@ const shells = new Map<
   string,
   { worker: WorkerClient; connectionId: string; database: string }
 >();
-const fileGrants = new Map<string, "open" | "save" | "directory">();
+const FILE_GRANT_TTL_MS = 30 * 60 * 1000;
+const fileGrants = new Map<
+  string,
+  { kind: "open" | "save" | "directory"; grantedAt: number }
+>();
+function pruneFileGrants(now = Date.now()) {
+  for (const [key, entry] of fileGrants) {
+    if (now - entry.grantedAt > FILE_GRANT_TTL_MS) fileGrants.delete(key);
+  }
+  while (fileGrants.size > 100) {
+    const oldest = fileGrants.keys().next().value;
+    if (!oldest) break;
+    fileGrants.delete(oldest);
+  }
+}
+function grantFile(path: string, kind: "open" | "save" | "directory") {
+  pruneFileGrants();
+  const key = resolve(path);
+  fileGrants.delete(key);
+  fileGrants.set(key, { kind, grantedAt: Date.now() });
+}
+function hasFileGrant(
+  path: string,
+  kind: "open" | "save" | "directory",
+): boolean {
+  pruneFileGrants();
+  const key = resolve(path);
+  const entry = fileGrants.get(key);
+  return Boolean(entry && entry.kind === kind);
+}
 const receiptContexts = new Map<string, ReceiptContext>();
 const earlyFinalJobs = new Map<string, AppEvent["data"]>();
 const notifiedJobs = new Set<string>();
@@ -273,7 +302,14 @@ async function connect(id: string) {
 async function openShell(sessionId: string, connectionId: string, db: string) {
   await connect(connectionId);
   shells.get(sessionId)?.worker.kill();
-  const worker = new WorkerClient(join(__dirname, "shell.cjs"), event);
+  const worker = new WorkerClient(join(__dirname, "shell.cjs"), (update) => {
+    const session = shells.get(sessionId);
+    if (session?.worker !== worker) return;
+    if (update.type === "shell" && typeof update.data.database === "string") {
+      session.database = update.data.database;
+      event({ ...update, data: { ...update.data, sessionId } });
+    } else event(update);
+  });
   shells.set(sessionId, { worker, connectionId, database: db });
   try {
     await worker.request("open", {
@@ -589,7 +625,7 @@ async function request(command: Command, raw: any): Promise<any> {
       await connect(p.connectionId);
       return engine().request(command, p, p.maxTimeMS + 15000);
     case "reports.export":
-      if (fileGrants.get(resolve(p.path)) !== "save")
+      if (!hasFileGrant(p.path, "save"))
         throw new Error("Select an export path using the file picker");
       JSON.parse(p.content);
       await writeFile(resolve(p.path), p.content, "utf8");
@@ -626,7 +662,7 @@ async function request(command: Command, raw: any): Promise<any> {
     case "queryBundles.read":
     case "diagnostics.read": {
       const path = resolve(p.path);
-      if (fileGrants.get(path) !== "open")
+      if (!hasFileGrant(path, "open"))
         throw new Error("Select an import file using the file picker");
       if (statSync(path).size > 8 * 1024 * 1024)
         throw new Error("Import file exceeds 8 MB");
@@ -638,7 +674,7 @@ async function request(command: Command, raw: any): Promise<any> {
     case "queryBundles.import":
       return storage.importQueryBundle(p);
     case "delivery.export":
-      if (fileGrants.get(resolve(p.path)) !== "save")
+      if (!hasFileGrant(p.path, "save"))
         throw new Error("Select an export path using the file picker");
       await writeFile(resolve(p.path), p.content, "utf8");
       return { path: resolve(p.path) };
@@ -671,11 +707,12 @@ async function request(command: Command, raw: any): Promise<any> {
         batchSize,
         ...options
       } = input;
+      const nameSuffix = ` · ${captured.capturedAt}`;
       return storage.saveExplainRecord({
         format: "irwin-explain-record",
         version: 1,
         id: randomUUID(),
-        name: `${collection} · ${captured.capturedAt}`,
+        name: `${collection.slice(0, 160 - nameSuffix.length)}${nameSuffix}`,
         capturedAt: captured.capturedAt,
         appVersion: app.getVersion(),
         source: {
@@ -745,7 +782,7 @@ async function request(command: Command, raw: any): Promise<any> {
         });
         if (!result.canceled) path = result.filePaths[0];
       }
-      if (path) fileGrants.set(resolve(path), p.kind);
+      if (path) grantFile(path, p.kind);
       return path || null;
     }
     case "shellSessions.open":
@@ -779,14 +816,13 @@ async function request(command: Command, raw: any): Promise<any> {
     case "shellDrafts.delete":
       return storage.deleteShellDraft(p.id);
     case "transferJobs.start": {
-      const grant = fileGrants.get(resolve(p.path));
       const needed =
         p.format !== "bson" && !p.collection
           ? "directory"
           : p.direction === "import"
             ? "open"
             : "save";
-      if (grant !== needed)
+      if (!hasFileGrant(p.path, needed))
         throw new Error("Select the transfer path using the file picker");
       await connect(p.connectionId);
       const started = await engine().request(command, {
@@ -814,7 +850,7 @@ async function request(command: Command, raw: any): Promise<any> {
       return started;
     }
     case "aggregations.export":
-      if (fileGrants.get(resolve(p.path)) !== "save")
+      if (!hasFileGrant(p.path, "save"))
         throw new Error("Select an export path using the file picker");
       await connect(p.connectionId);
       {
@@ -831,11 +867,11 @@ async function request(command: Command, raw: any): Promise<any> {
         return started;
       }
     case "transferJobs.preview":
-      if (fileGrants.get(resolve(p.path)) !== "open")
+      if (!hasFileGrant(p.path, "open"))
         throw new Error("Select a CSV file first");
       return engine().request(command, p);
     case "results.export":
-      if (fileGrants.get(resolve(p.path)) !== "save")
+      if (!hasFileGrant(p.path, "save"))
         throw new Error("Select an export path using the file picker");
       if (p.format === "excel")
         await writeFile(resolve(p.path), Buffer.from(p.content, "base64"));
@@ -1040,6 +1076,7 @@ app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
   shuttingDown = true;
   allowWindowClose = true;
+  fileGrants.clear();
   for (const controller of aiRequests.values()) controller.abort();
   aiRequests.clear();
   for (const s of shells.values()) s.worker.kill();

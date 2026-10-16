@@ -1,5 +1,6 @@
 // Real App/CollectionTab/Results with an isolated database IPC boundary.
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
 import { chromium, expect } from "@playwright/test";
 import { createServer } from "vite";
 const server = await createServer({
@@ -114,7 +115,34 @@ try {
     .click();
   await page.getByText("qa_db", { exact: true }).first().click();
   await page.getByText("documents", { exact: true }).first().click();
-  const cell = page.locator(".grid-cell").filter({ hasText: /^before$/ });
+  await expect(page.locator(".grid-cell").first()).toBeVisible();
+  await mkdir(".runtime/cell-update-notices", { recursive: true });
+  await writeFile(
+    ".runtime/cell-update-notices/layout.json",
+    JSON.stringify(
+      await page.evaluate(() =>
+        Object.fromEntries(
+          [
+            ".app-header",
+            ".tabs-bar",
+            ".breadcrumb",
+            ".query-bar",
+            ".query-actions",
+            ".result-toolbar",
+            ".result-footer",
+            ".table-scroll",
+          ].map((selector) => [
+            selector,
+            document.querySelector(selector).getBoundingClientRect().height,
+          ]),
+        ),
+      ),
+      null,
+      2,
+    ),
+  );
+  await page.screenshot({ path: ".runtime/cell-update-notices/workspace.png" });
+  const cell = page.locator(".cell-preview").filter({ hasText: /^before$/ });
   await cell.dblclick();
   await page
     .getByRole("textbox", { name: "Edit cell", exact: true })
@@ -123,7 +151,7 @@ try {
     .getByRole("textbox", { name: "Edit cell", exact: true })
     .press("Enter");
   await expect(
-    page.locator(".grid-cell").filter({ hasText: /^after$/ }),
+    page.locator(".cell-preview").filter({ hasText: /^after$/ }),
   ).toBeVisible();
   assert.equal(
     await page.locator(".output").count(),
@@ -137,6 +165,46 @@ try {
   await expect(page.locator(".toast.error")).toContainText(
     "Query rejected by QA server",
   );
+  const output = page.locator(".output");
+  await expect(output).toBeVisible();
+  await expect(output).not.toHaveAttribute("open", "");
+  await expect(output.locator("pre")).toHaveCount(0);
+  // Saving after an earlier query output must leave the panel collapsed.
+  await page
+    .locator(".cell-preview")
+    .filter({ hasText: /^after$/ })
+    .dblclick();
+  await page
+    .getByRole("textbox", { name: "Edit cell", exact: true })
+    .fill("after-output");
+  await page
+    .getByRole("textbox", { name: "Edit cell", exact: true })
+    .press("Enter");
+  await expect(page.locator(".toast.success")).toContainText("Saved");
+  await expect(output).not.toHaveAttribute("open", "");
+  await output
+    .getByRole("button", { name: "Expand output", exact: true })
+    .click();
+  await expect(output.locator("pre")).toContainText(
+    "Query rejected by QA server",
+  );
+  // An explicit user choice to expand is preserved when a field is saved.
+  await page
+    .locator(".cell-preview")
+    .filter({ hasText: /^after-output$/ })
+    .dblclick();
+  await page
+    .getByRole("textbox", { name: "Edit cell", exact: true })
+    .fill("after");
+  await page
+    .getByRole("textbox", { name: "Edit cell", exact: true })
+    .press("Enter");
+  await expect(page.locator(".toast.success")).toContainText("Saved");
+  await expect(output).toHaveAttribute("open", "");
+  await output
+    .getByRole("button", { name: "Collapse output", exact: true })
+    .click();
+  await expect(output).not.toHaveAttribute("open", "");
   await expect(page.locator(".toast")).toHaveCount(0, { timeout: 6500 });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.locator(".toast.error")).toBeVisible();
@@ -154,7 +222,7 @@ try {
     .click();
   await page.evaluate(() => (window.failWrite = true));
   await page
-    .locator(".grid-cell")
+    .locator(".cell-preview")
     .filter({ hasText: /^after$/ })
     .dblclick();
   await page

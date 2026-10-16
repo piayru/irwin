@@ -9,9 +9,12 @@ import {
   TableProperties,
 } from "lucide-react";
 import { settingsSchema, type Settings } from "../shared/contracts";
+import { isDarkTheme } from "../shared/themes";
 import { Field, Modal, useUi } from "./ui";
 import { resetSettingsSection, type PreferenceSection } from "./preferences";
 import { AISettingsSection } from "./AISettingsSection";
+import { AppearanceColors } from "./AppearanceColors";
+import { ViewSettings } from "./ViewSettings";
 
 const sections: {
   id: PreferenceSection;
@@ -20,7 +23,7 @@ const sections: {
   en: string;
 }[] = [
   { id: "appearance", icon: Palette, zh: "外觀", en: "Appearance" },
-  { id: "editor", icon: Code2, zh: "編輯器", en: "Editor" },
+  { id: "editor", icon: Code2, zh: "編輯器與檢視", en: "Editor & views" },
   { id: "ai", icon: Sparkles, zh: "AI 助理", en: "AI assistant" },
   {
     id: "query-results",
@@ -42,21 +45,55 @@ const lightThemes = [
     id: "light",
     zh: "芒果暖色",
     en: "Mango warm",
-    swatches: ["#fbf8f2", "#ffffff", "#e9b86b"],
+    swatches: ["#fff8e7", "#fffdf7", "#c73e30"],
   },
   {
     id: "azure",
     zh: "經典藍",
     en: "Classic blue",
-    swatches: ["#f3f7fc", "#ffffff", "#4688c8"],
+    swatches: ["#f4f6f9", "#ffffff", "#285da8"],
   },
   {
     id: "forest",
     zh: "森林綠",
     en: "Forest green",
-    swatches: ["#f4f8f3", "#ffffff", "#548f68"],
+    swatches: ["#f4f8f1", "#fbfdf8", "#3f7d46"],
+  },
+  {
+    id: "lavender",
+    zh: "霧紫",
+    en: "Lavender",
+    swatches: ["#f6f3fb", "#fdfbff", "#7051a3"],
+  },
+  {
+    id: "paper",
+    zh: "紙白",
+    en: "Paper",
+    swatches: ["#f5f6f5", "#ffffff", "#24675d"],
   },
 ] as const;
+
+const darkThemes = [
+  {
+    id: "dark",
+    zh: "深色",
+    en: "Dark",
+    swatches: ["#18212b", "#202b37", "#88b9f5"],
+  },
+  {
+    id: "midnight",
+    zh: "午夜藍",
+    en: "Midnight",
+    swatches: ["#111827", "#182337", "#a8b8ff"],
+  },
+  {
+    id: "graphite",
+    zh: "石墨灰",
+    en: "Graphite",
+    swatches: ["#1d2022", "#272b2d", "#8fd2bd"],
+  },
+] as const;
+const themes = [...lightThemes, ...darkThemes];
 
 export function PreferencesDialog({
   savedSettings,
@@ -76,6 +113,9 @@ export function PreferencesDialog({
   const { t } = useUi();
   const [section, setSection] = useState<PreferenceSection>(initialSection);
   const [saving, setSaving] = useState(false);
+  const [appearanceMode, setAppearanceMode] = useState<"themes" | "colors">(
+    "themes",
+  );
   const defaults = settingsSchema.parse({});
   const hasChanges = JSON.stringify(savedSettings) !== JSON.stringify(draft);
   const parsed = settingsSchema.safeParse(draft);
@@ -213,16 +253,11 @@ export function PreferencesDialog({
                     <option value="system">
                       {t("依照系統切換", "Follow system")}
                     </option>
-                    <option value="light">
-                      {t("芒果暖色（淺色）", "Mango warm")}
-                    </option>
-                    <option value="azure">
-                      {t("經典藍（淺色）", "Classic blue")}
-                    </option>
-                    <option value="forest">
-                      {t("森林綠（淺色）", "Forest green")}
-                    </option>
-                    <option value="dark">{t("深色", "Dark")}</option>
+                    {themes.map(({ id, zh, en }) => (
+                      <option key={id} value={id}>
+                        {t(`${zh}（${isDarkTheme(id) ? "深色" : "淺色"}）`, en)}
+                      </option>
+                    ))}
                   </select>
                   <small>
                     {t(
@@ -286,60 +321,68 @@ export function PreferencesDialog({
                 </Field>
               </div>
               <div
-                className="preference-theme-preview"
-                aria-label={t("主題預覽", "Theme previews")}
+                className="segmented appearance-tabs"
+                role="tablist"
+                aria-label={t("外觀設定", "Appearance options")}
               >
-                {lightThemes.map(({ id, zh, en, swatches }) => {
-                  const selected =
-                    draft.theme === id ||
-                    (draft.theme === "system" && draft.systemLightTheme === id);
-                  return (
-                    <button
-                      type="button"
-                      key={id}
-                      className={`theme-preview ${selected ? "selected" : ""}`}
-                      onClick={() =>
-                        draft.theme === "system"
-                          ? update("systemLightTheme", id)
-                          : update("theme", id)
-                      }
-                      aria-pressed={selected}
-                      title={t(zh, en)}
-                    >
-                      <div className="theme-preview-window" data-theme={id}>
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                      <span>{t(zh, en)}</span>
-                      <div className="theme-swatches" aria-hidden="true">
-                        {swatches.map((color) => (
-                          <i key={color} style={{ background: color }} />
-                        ))}
-                      </div>
-                    </button>
-                  );
-                })}
                 <button
-                  type="button"
-                  className={`theme-preview dark-preview ${draft.theme === "dark" ? "selected" : ""}`}
-                  aria-pressed={draft.theme === "dark"}
-                  onClick={() => update("theme", "dark")}
-                  title={t("深色", "Dark")}
+                  role="tab"
+                  aria-selected={appearanceMode === "themes"}
+                  className={appearanceMode === "themes" ? "active" : ""}
+                  onClick={() => setAppearanceMode("themes")}
                 >
-                  <div className="theme-preview-window" data-theme="dark">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                  <span>{t("深色", "Dark")}</span>
-                  <div className="theme-swatches" aria-hidden="true">
-                    <i style={{ background: "#101722" }} />
-                    <i style={{ background: "#172230" }} />
-                    <i style={{ background: "#e9b86b" }} />
-                  </div>
+                  {t("主題預覽", "Theme previews")}
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={appearanceMode === "colors"}
+                  className={appearanceMode === "colors" ? "active" : ""}
+                  onClick={() => setAppearanceMode("colors")}
+                >
+                  {t("自訂配色", "Custom colors")}
                 </button>
               </div>
+              {appearanceMode === "colors" ? (
+                <AppearanceColors draft={draft} onUpdate={onUpdate} />
+              ) : (
+                <div
+                  className="preference-theme-preview"
+                  aria-label={t("主題預覽", "Theme previews")}
+                >
+                  {themes.map(({ id, zh, en, swatches }) => {
+                    const selected =
+                      draft.theme === id ||
+                      (draft.theme === "system" &&
+                        draft.systemLightTheme === id);
+                    return (
+                      <button
+                        type="button"
+                        key={id}
+                        className={`theme-preview ${selected ? "selected" : ""}`}
+                        onClick={() =>
+                          draft.theme === "system" && !isDarkTheme(id)
+                            ? update("systemLightTheme", id)
+                            : update("theme", id)
+                        }
+                        aria-pressed={selected}
+                        title={t(zh, en)}
+                      >
+                        <div className="theme-preview-window" data-theme={id}>
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <span>{t(zh, en)}</span>
+                        <div className="theme-swatches" aria-hidden="true">
+                          {swatches.map((color) => (
+                            <i key={color} style={{ background: color }} />
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 
@@ -347,7 +390,7 @@ export function PreferencesDialog({
             <>
               <div className="preferences-section-head">
                 <div>
-                  <h3>{t("編輯器", "Editor")}</h3>
+                  <h3>{t("編輯器與檢視", "Editor & views")}</h3>
                   <p>
                     {t(
                       "分開控制介面字體與 JSON／命令編輯器字體。",
@@ -443,6 +486,7 @@ export function PreferencesDialog({
                   }}
                 >{`{ "collection": "orders", "count": 42 }`}</code>
               </div>
+              <ViewSettings draft={draft} onUpdate={onUpdate} />
             </>
           )}
 
@@ -526,8 +570,8 @@ export function PreferencesDialog({
                   </select>
                   <small>
                     {t(
-                      "標示 ObjectId、Int64、Decimal128 等特殊型別。",
-                      "Labels special types such as ObjectId, Int64 and Decimal128.",
+                      "以 Str、Int、Obj、Date 等簡短標籤標示所有型別。",
+                      "Labels all types with short tags such as Str, Int, Obj and Date.",
                     )}
                   </small>
                 </Field>

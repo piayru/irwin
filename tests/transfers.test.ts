@@ -371,6 +371,44 @@ test("database manifest round trip", async () => {
     201,
   );
 });
+test("invalid BSON export filters leave no partial file and can be corrected and retried", async () => {
+  const path = join(directory, "filtered-retry.gz");
+  const collection = "bson_filter_retry";
+  const source = client
+    .db("transfer_test")
+    .collection<{ _id: number; n: number }>(collection);
+  await source.insertMany([
+    { _id: 1, n: 0 },
+    { _id: 2, n: 1 },
+    { _id: 3, n: 2 },
+  ]);
+  const invalid = await job({ collection, format: "bson", path, filter: "{" });
+  expect(invalid.status).toBe("failed");
+  await expect(stat(`${path}.partial`)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  const exported = await job({
+    collection,
+    format: "bson",
+    path,
+    filter: "{n:{$gte:1}}",
+  });
+  expect(exported.status, exported.message).toBe("completed");
+  expect(exported.processed).toBe(2);
+  await source.deleteMany({});
+  const restored = await job({
+    collection,
+    format: "bson",
+    path,
+    direction: "import",
+  });
+  expect(restored.status, restored.message).toBe("completed");
+  expect(await source.find().sort({ _id: 1 }).toArray()).toEqual([
+    { _id: 2, n: 1 },
+    { _id: 3, n: 2 },
+  ]);
+});
+
 test("BSON archive round trip with bundled official tools", async () => {
   const path = join(directory, "backup.gz");
   const result = await job({ format: "bson", path });

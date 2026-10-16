@@ -15,28 +15,42 @@ async function loadHelper() {
   );
 }
 
-function fixture(blocked = false, exitCode = 0, waitsForInspector = false) {
+function fixture(
+  options: {
+    blocked?: boolean;
+    exitCode?: number;
+    signal?: string;
+    staysRunning?: boolean;
+    synchronousExit?: boolean;
+    pendingReply?: boolean;
+    requestError?: Error;
+  } = {},
+) {
   const child = Object.assign(new EventEmitter(), {
     pid: 123,
     exitCode: null as number | null,
-    signalCode: null,
+    signalCode: null as string | null,
   });
   const pageEvents = new EventEmitter();
-  const appEvents = new EventEmitter();
   let closed = false;
-  let inspectorDisconnected = false;
   const order: string[] = [];
+  const exit = () => {
+    child.exitCode = options.signal ? null : (options.exitCode ?? 0);
+    child.signalCode = options.signal ?? null;
+    order.push("process.exit");
+    child.emit("exit", child.exitCode, child.signalCode);
+  };
   const window = {
     close() {
       order.push("window.close");
-      if (!blocked) {
-        closed = true;
-        pageEvents.emit("close");
-        if (waitsForInspector) appEvents.emit("will-quit");
+      if (options.blocked) return;
+      closed = true;
+      pageEvents.emit("close");
+      if (!options.staysRunning) {
+        if (options.synchronousExit) exit();
+        else setTimeout(exit, 0);
       }
     },
-    isVisible: () => !closed,
-    isDestroyed: () => closed,
   };
   const app = {
     process: () => child,
@@ -56,85 +70,94 @@ function fixture(blocked = false, exitCode = 0, waitsForInspector = false) {
           }),
       },
     ],
-    evaluate: async (callback: (args: unknown) => unknown) =>
-      callback({
-        BrowserWindow: { getAllWindows: () => [window] },
-        app: {
-          isReady: () => true,
-          once: appEvents.once.bind(appEvents),
-        },
-      }),
-    close: vi.fn(async () => {
-      order.push("debugger.detach");
-      if (waitsForInspector && !inspectorDisconnected)
-        await new Promise(() => {});
-      child.exitCode = exitCode;
-      order.push("process.exit");
-      child.emit("exit", exitCode, null);
-    }),
-  };
-  return {
-    app,
-    order,
-    detachInspector: () => {
-      inspectorDisconnected = true;
-      order.push("inspector.detach");
+    evaluate: async (callback: (args: unknown) => unknown) => {
+      if (options.requestError) throw options.requestError;
+      callback({ BrowserWindow: { getAllWindows: () => [window] } });
+      if (options.pendingReply) await new Promise(() => {});
     },
+    // Another quit RPC cannot complete while its inspector is detaching.
+    close: vi.fn(async () => new Promise(() => {})),
   };
+  return { app, child, order };
 }
 
-test("normal Electron close releases the debugger before waiting for process exit", async () => {
+test("a normal process exit succeeds even when another quit RPC would never return", async () => {
   vi.useFakeTimers();
   const { closeElectronWindowNormally } = await loadHelper();
-  const { app, order } = fixture();
+  const { app, child, order } = fixture();
   const check = expect(
     closeElectronWindowNormally(app),
   ).resolves.toBeUndefined();
   await Promise.all([check, vi.runAllTimersAsync()]);
-  expect(order).toEqual(["window.close", "debugger.detach", "process.exit"]);
+  expect(order).toEqual(["window.close", "process.exit"]);
+  expect(child.listenerCount("exit")).toBe(0);
 });
 
 test("a prevented window close is not bypassed by quitting through Playwright", async () => {
   vi.useFakeTimers();
   const { closeElectronWindowNormally } = await loadHelper();
-  const { app } = fixture(true);
+  const { app, child } = fixture({ blocked: true });
   const check = expect(closeElectronWindowNormally(app)).rejects.toThrow(
     "windows did not close",
   );
   await Promise.all([check, vi.runAllTimersAsync()]);
   expect(app.close).not.toHaveBeenCalled();
+  expect(child.listenerCount("exit")).toBe(0);
 });
 
-test("an abnormal Electron exit cannot pass normal shutdown validation", async () => {
+test.each([{ exitCode: 42 }, { signal: "SIGTERM" }])(
+  "an abnormal Electron exit cannot pass normal shutdown validation: %j",
+  async (options) => {
+    vi.useFakeTimers();
+    const { closeElectronWindowNormally } = await loadHelper();
+    const { app } = fixture(options);
+    const check = expect(closeElectronWindowNormally(app)).rejects.toThrow(
+      "exited abnormally",
+    );
+    await Promise.all([check, vi.runAllTimersAsync()]);
+  },
+);
+
+test("a process that stays alive after its window closes fails the exit deadline", async () => {
   vi.useFakeTimers();
   const { closeElectronWindowNormally } = await loadHelper();
-  const { app } = fixture(false, 42);
+  const { app, child } = fixture({ staysRunning: true });
   const check = expect(closeElectronWindowNormally(app)).rejects.toThrow(
-    "exitCode=42",
+    "did not exit after normal window close",
   );
   await Promise.all([check, vi.runAllTimersAsync()]);
+  expect(child.listenerCount("exit")).toBe(0);
 });
 
-test("normal quit detaches the inspector before an RPC to a shutting-down main process can hang", async () => {
+test("normal exit does not depend on a reply from a closing inspector", async () => {
   vi.useFakeTimers();
   const { closeElectronWindowNormally } = await loadHelper();
-  const { app, order, detachInspector } = fixture(false, 0, true);
-  const originalGetBuiltinModule = process.getBuiltinModule.bind(process);
-  vi.spyOn(process, "getBuiltinModule").mockImplementation((name) =>
-    name === "node:inspector"
-      ? ({ close: detachInspector } as ReturnType<
-          typeof process.getBuiltinModule
-        >)
-      : originalGetBuiltinModule(name),
-  );
+  const { app } = fixture({ pendingReply: true });
   const check = expect(
     closeElectronWindowNormally(app),
   ).resolves.toBeUndefined();
   await Promise.all([check, vi.runAllTimersAsync()]);
-  expect(order).toEqual([
-    "window.close",
-    "inspector.detach",
-    "debugger.detach",
-    "process.exit",
-  ]);
+});
+
+test("an exit emitted during the close request is not missed", async () => {
+  vi.useFakeTimers();
+  const { closeElectronWindowNormally } = await loadHelper();
+  const { app } = fixture({ synchronousExit: true });
+  const check = expect(
+    closeElectronWindowNormally(app),
+  ).resolves.toBeUndefined();
+  await Promise.all([check, vi.runAllTimersAsync()]);
+});
+
+test("an unexpected close request failure is reported and removes the exit listener", async () => {
+  vi.useFakeTimers();
+  const { closeElectronWindowNormally } = await loadHelper();
+  const { app, child } = fixture({
+    requestError: new Error("Close request failed"),
+  });
+  const check = expect(closeElectronWindowNormally(app)).rejects.toThrow(
+    "Close request failed",
+  );
+  await Promise.all([check, vi.runAllTimersAsync()]);
+  expect(child.listenerCount("exit")).toBe(0);
 });

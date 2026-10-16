@@ -19,6 +19,8 @@ import {
   type CompletionContext,
 } from "../shared/exploration";
 import { useUi } from "./ui";
+import { isDarkTheme } from "../shared/themes";
+import { resolveViewStyles } from "./appearance";
 (self as any).MonacoEnvironment = {
   getWorker(_: string, label: string) {
     return label === "json"
@@ -82,13 +84,25 @@ export function CodeEditor({
   completionContext?: CompletionContext;
   validationError?: { line: number; column: number; message: string };
 }) {
+  const ui = useUi();
   const {
     editorFontFamily,
     fontSize,
     tabWidth,
     editorLineHeight,
     editorPadding,
-  } = useUi();
+  } = ui;
+  const jsonStyle = resolveViewStyles(ui).json;
+  const typography =
+    language === "javascript"
+      ? {
+          fontFamily: editorFontFamily,
+          fontSize,
+          lineHeight: editorLineHeight,
+          padding: editorPadding,
+          tabWidth,
+        }
+      : jsonStyle;
   const editorRef = useRef<editor.IStandaloneCodeEditor | undefined>(undefined);
   const updateValidation = (instance = editorRef.current) => {
     const model = instance?.getModel();
@@ -174,7 +188,7 @@ export function CodeEditor({
       height={height}
       language={language}
       value={value}
-      theme={theme === "dark" ? "vs-dark" : "light"}
+      theme={isDarkTheme(theme) ? "vs-dark" : "light"}
       onChange={(v) => onChange?.(v || "")}
       onMount={(instance) => {
         editorRef.current = instance;
@@ -262,20 +276,20 @@ export function CodeEditor({
       }}
       options={{
         readOnly,
-        fontSize,
-        fontFamily: editorFontFamily,
-        lineHeight: editorLineHeight,
+        fontSize: typography.fontSize,
+        fontFamily: typography.fontFamily,
+        lineHeight: typography.lineHeight,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         automaticLayout: true,
-        tabSize: tabWidth,
+        tabSize: typography.tabWidth,
         insertSpaces: true,
         detectIndentation: false,
         folding: true,
         foldingStrategy: "indentation",
         showFoldingControls: "always",
         wordWrap: "on",
-        padding: { top: editorPadding, bottom: editorPadding },
+        padding: { top: typography.padding, bottom: typography.padding },
         renderLineHighlight: "none",
         fixedOverflowWidgets: true,
         contextmenu: true,

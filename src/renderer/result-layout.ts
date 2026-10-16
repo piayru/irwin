@@ -43,6 +43,8 @@ function textWidth(text: string) {
 export function fitInitialTableColumnWidths(
   columns: readonly string[],
   values: Readonly<Record<string, readonly string[]>>,
+  fontSize = 12,
+  paddingX = 12,
 ): Record<string, number> {
   return Object.fromEntries(
     columns.map((column) => {
@@ -50,7 +52,7 @@ export function fitInitialTableColumnWidths(
         (width, value) => Math.max(width, textWidth(value)),
         0,
       );
-      const desired = Math.ceil(widest + 24);
+      const desired = Math.ceil(widest * (fontSize / 12) + paddingX * 2);
       return [
         column,
         desired < DEFAULT_TABLE_COLUMN_WIDTH

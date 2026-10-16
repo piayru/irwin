@@ -12,6 +12,7 @@ import { DatabaseService } from "../src/core/database";
 import { ShellService } from "../src/core/shell";
 import { profileSchema, querySchema } from "../src/shared/contracts";
 import { encode, decode } from "../src/shared/bson";
+import { EJSON } from "bson";
 let server: MongoMemoryServer;
 let client: MongoClient;
 let shell: ShellService;
@@ -434,6 +435,182 @@ test("native shell queries, cursor continuation and writes execute once", async 
     '({v: NumberLong("9007199254740993"), id:ObjectId()})',
   );
   expect(bson.rows[0].ejson).toContain("$numberLong");
+});
+
+test("shell updateOne shows its write result for nested set/addToSet, no-op and unmatched updates", async () => {
+  const coll = client.db("workbench_test").collection("shell_write_result_qa");
+  await coll.insertOne({
+    cardId: "ips-convert",
+    providerConfig: { ipsConfig: { recipes: [] } },
+  });
+  const recipe = {
+    section: "results",
+    type: "flatten",
+    mappings: [],
+    sources: [{ source: "r8", fields: [{ to: "label", from: "r8.9" }] }],
+  };
+  const update = {
+    $set: { "providerConfig.ipsConfig.ruleSetVersion": "healthbank-ips-v7" },
+    $addToSet: { "providerConfig.ipsConfig.recipes": recipe },
+  };
+  const command = `db.getCollection("shell_write_result_qa").updateOne({cardId:"ips-convert"}, ${JSON.stringify(update)})`;
+  const changed = await shell.execute(command);
+  const stored = await coll.findOne({ cardId: "ips-convert" });
+  expect(stored!.providerConfig).toEqual({
+    ipsConfig: { ruleSetVersion: "healthbank-ips-v7", recipes: [recipe] },
+  });
+  expect(changed.rows).toHaveLength(1);
+  expect(changed.rows[0].editable).toBe(false);
+  expect(EJSON.parse(changed.rows[0].ejson, { relaxed: true })).toMatchObject({
+    acknowledged: true,
+    matchedCount: 1,
+    modifiedCount: 1,
+  });
+  const unchanged = await shell.execute(command);
+  expect(unchanged.rows).toHaveLength(1);
+  expect(EJSON.parse(unchanged.rows[0].ejson, { relaxed: true })).toMatchObject(
+    {
+      acknowledged: true,
+      matchedCount: 1,
+      modifiedCount: 0,
+    },
+  );
+  const missing = await shell.execute(
+    'db.shell_write_result_qa.updateOne({cardId:"missing"}, {$set:{active:true}})',
+  );
+  expect(missing.rows).toHaveLength(1);
+  expect(EJSON.parse(missing.rows[0].ejson, { relaxed: true })).toMatchObject({
+    acknowledged: true,
+    matchedCount: 0,
+    modifiedCount: 0,
+  });
+});
+
+test("shell insert, replace, updateMany, delete and bulk write results are visible read-only rows", async () => {
+  const commands: [string, Record<string, unknown>][] = [
+    ['insertOne({_id:"one",n:1})', { acknowledged: true, insertedId: "one" }],
+    [
+      'insertMany([{_id:"two",n:2},{_id:"three",n:3}])',
+      { acknowledged: true, insertedIds: { 0: "two", 1: "three" } },
+    ],
+    [
+      'replaceOne({_id:"one"},{n:4})',
+      { acknowledged: true, matchedCount: 1, modifiedCount: 1 },
+    ],
+    [
+      "updateMany({},{$set:{active:true}})",
+      { acknowledged: true, matchedCount: 3, modifiedCount: 3 },
+    ],
+    ['deleteOne({_id:"one"})', { acknowledged: true, deletedCount: 1 }],
+    ["deleteMany({active:true})", { acknowledged: true, deletedCount: 2 }],
+    [
+      'bulkWrite([{insertOne:{document:{_id:"bulk",n:1}}},{updateOne:{filter:{_id:"bulk"},update:{$inc:{n:1}}}}])',
+      { insertedCount: 1, matchedCount: 1, modifiedCount: 1 },
+    ],
+  ];
+  for (const [command, expected] of commands) {
+    const response = await shell.execute(
+      `db.getCollection("shell_other_write_qa").${command}`,
+    );
+    expect(response.rows, command).toHaveLength(1);
+    expect(response.rows[0].editable).toBe(false);
+    expect(
+      EJSON.parse(response.rows[0].ejson, { relaxed: true }),
+      command,
+    ).toMatchObject(expected);
+    expect(response.hasMore).toBe(false);
+  }
+  expect(
+    await client
+      .db("workbench_test")
+      .collection("shell_other_write_qa")
+      .findOne({ _id: "bulk" as any }),
+  ).toMatchObject({ n: 2 });
+});
+
+test("Shell database context tracks use, assignment and failures without changing the original database", async () => {
+  try {
+    expect(await shell.execute("use shell_context_qa")).toMatchObject({
+      database: "shell_context_qa",
+    });
+    expect(
+      await shell.execute('db.probe.insertOne({_id:"other-db"})'),
+    ).toMatchObject({ database: "shell_context_qa", kind: "write" });
+    expect(
+      await client
+        .db("shell_context_qa")
+        .collection("probe")
+        .findOne({ _id: "other-db" as any }),
+    ).not.toBeNull();
+    expect(
+      await client
+        .db("workbench_test")
+        .collection("probe")
+        .findOne({ _id: "other-db" as any }),
+    ).toBeNull();
+    await expect(
+      shell.execute(
+        'db = db.getSiblingDB("shell_error_context_qa"); throw new Error("after switching")',
+      ),
+    ).rejects.toThrow("after switching");
+    expect(shell).toHaveProperty("database", "shell_error_context_qa");
+    expect(await shell.execute("db.probe.find({})")).toMatchObject({
+      database: "shell_error_context_qa",
+      kind: "documents",
+      rows: [],
+    });
+  } finally {
+    await shell.execute("use workbench_test");
+  }
+});
+
+test("legacy bulk writes report modified counts while ordinary reads retain exact BSON types", async () => {
+  const coll = client.db("workbench_test").collection("legacy_bulk_stats_qa");
+  await coll.insertOne({
+    _id: "one" as any,
+    n: 0,
+    int: new Int32(4),
+    double: new Double(1),
+    long: Long.fromString("9007199254740993"),
+  });
+  for (const ordered of [true, false]) {
+    const result = await shell.execute(
+      `var bulk = db.legacy_bulk_stats_qa.initialize${ordered ? "Ordered" : "Unordered"}BulkOp(); bulk.find({_id:"one"}).updateOne({$inc:{n:1}}); bulk.execute()`,
+    );
+    expect(EJSON.parse(result.rows[0].ejson, { relaxed: true })).toMatchObject({
+      matchedCount: 1,
+      modifiedCount: 1,
+    });
+  }
+  const doc = JSON.parse(
+    (await shell.execute('db.legacy_bulk_stats_qa.findOne({_id:"one"})'))
+      .rows[0].ejson,
+  );
+  expect(doc).toMatchObject({
+    n: { $numberInt: "2" },
+    int: { $numberInt: "4" },
+    double: { $numberDouble: "1.0" },
+    long: { $numberLong: "9007199254740993" },
+  });
+});
+
+test("MongoDB client bulk replies retain accurate write counters", async () => {
+  const result = await shell.execute(
+    'db.getMongo().bulkWrite([{namespace:"workbench_test.client_bulk_stats_qa",name:"insertOne",document:{_id:"one",n:0}},{namespace:"workbench_test.client_bulk_stats_qa",name:"updateOne",filter:{_id:"one"},update:{$inc:{n:1}}}])',
+  );
+  expect(result).toMatchObject({ kind: "write", hasMore: false });
+  expect(EJSON.parse(result.rows[0].ejson, { relaxed: true })).toMatchObject({
+    acknowledged: true,
+    insertedCount: 1,
+    matchedCount: 1,
+    modifiedCount: 1,
+  });
+  expect(
+    await client
+      .db("workbench_test")
+      .collection("client_bulk_stats_qa")
+      .findOne({ _id: "one" as any }),
+  ).toMatchObject({ n: 1 });
 });
 test("projection without identity cannot be edited", async () => {
   const page = await database.run(

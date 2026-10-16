@@ -3,6 +3,10 @@ import { redact } from "../core/policy";
 const shell = new ShellService();
 const port = (process as any).parentPort;
 const send = (v: any) => (port ? port.postMessage(v) : process.send?.(v));
+const sendContext = () => {
+  const database = shell.database;
+  if (database) send({ event: { type: "shell", data: { database } } });
+};
 const receive = async ({ id, command, payload }: any) => {
   try {
     const result =
@@ -13,8 +17,10 @@ const receive = async ({ id, command, payload }: any) => {
           : command === "next"
             ? await shell.next()
             : await shell.close();
+    sendContext();
     send({ id, result });
   } catch (e) {
+    sendContext();
     send({ id, error: redact((e as Error).message) });
   }
 };

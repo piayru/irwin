@@ -76,6 +76,36 @@ test("date parameters require an explicit timezone so another teammate gets the 
     resolveQueryParameters(query, defs, { since: "2026-10-06T10:00:00" }),
   ).toThrow(/timezone|offset|ISO/);
 });
+test.each([
+  "2026-02-29T00:00:00Z",
+  "2026-02-30T00:00:00Z",
+  "2026-04-31T00:00:00+08:00",
+  "2024-02-30T00:00:00Z",
+  "2026-10-15T24:00:00Z",
+])(
+  "date parameter rejects invalid calendar/clock input instead of normalizing %s",
+  (since) => {
+    expect(() =>
+      resolveQueryParameters(
+        { ...query, filter: '{since:{$irwinParam:"since"}}' },
+        [{ name: "since", type: "date", description: "" }],
+        { since },
+      ),
+    ).toThrow(/since/);
+  },
+);
+
+test("date parameter retains a valid leap day and offset crossing midnight", () => {
+  const resolved = resolveQueryParameters(
+    { ...query, filter: '{since:{$irwinParam:"since"}}' },
+    [{ name: "since", type: "date", description: "" }],
+    { since: "2024-02-29T00:30:00+01:00" },
+  );
+  expect(object(resolved.filter).since.toISOString()).toBe(
+    "2024-02-28T23:30:00.000Z",
+  );
+});
+
 test("driver delivery uses environment credentials, canonical BSON and the explicit namespace", () => {
   const input = {
     database: "app",

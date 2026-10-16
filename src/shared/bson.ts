@@ -274,6 +274,29 @@ function shellKey(node: any): string {
     return String(node.value);
   throw new Error("Mongo shell object keys must be identifiers or literals");
 }
+export function parseIsoDate(value: string, label = "Date"): Date {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const dateTime =
+    /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00))$/.test(
+      value,
+    );
+  if (!dateOnly && !dateTime)
+    throw new Error(`${label} requires an ISO date string`);
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  const calendarDate = new Date(0);
+  calendarDate.setUTCHours(0, 0, 0, 0);
+  calendarDate.setUTCFullYear(year, month - 1, day);
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  )
+    throw new Error(`${label} received an invalid calendar date`);
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf()))
+    throw new Error(`${label} received an invalid date`);
+  return date;
+}
 function shellDate(node: any, constructor: "ISODate" | "Date"): unknown {
   if (constructor === "Date" && node.arguments?.length === 0) {
     return { $date: { $numberLong: String(Date.now()) } };
@@ -288,27 +311,9 @@ function shellDate(node: any, constructor: "ISODate" | "Date"): unknown {
         : "ISODate requires one literal argument",
     );
   const argument = node.arguments[0];
-  let value: string | number;
+  let value: number;
   if (argument.type === "StringLiteral") {
-    const stringValue: string = argument.value;
-    value = stringValue;
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(stringValue);
-    const dateTime =
-      /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00))$/.test(
-        stringValue,
-      );
-    if (!dateOnly && !dateTime)
-      throw new Error(`${constructor} requires an ISO date string`);
-    const [year, month, day] = stringValue.slice(0, 10).split("-").map(Number);
-    const calendarDate = new Date(0);
-    calendarDate.setUTCHours(0, 0, 0, 0);
-    calendarDate.setUTCFullYear(year, month - 1, day);
-    if (
-      calendarDate.getUTCFullYear() !== year ||
-      calendarDate.getUTCMonth() !== month - 1 ||
-      calendarDate.getUTCDate() !== day
-    )
-      throw new Error(`${constructor} received an invalid calendar date`);
+    value = parseIsoDate(argument.value, constructor).valueOf();
   } else if (
     constructor === "Date" &&
     (argument.type === "NumericLiteral" ||

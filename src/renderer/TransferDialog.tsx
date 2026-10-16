@@ -501,8 +501,8 @@ export default function TransferDialog({
           />
         )}
         {preview && <CsvPreview preview={preview} />}
-        {p.direction === "export" && p.format !== "bson" && (
-          <>
+        {p.direction === "export" &&
+          (p.format !== "bson" || Boolean(p.collection.trim())) && (
             <Field full label="Filter">
               <textarea
                 name="transfer-filter"
@@ -512,6 +512,9 @@ export default function TransferDialog({
                 onChange={(e) => set("filter", e.target.value)}
               />
             </Field>
+          )}
+        {p.direction === "export" && p.format !== "bson" && (
+          <>
             <Field label="Sort">
               <input
                 name="transfer-sort"

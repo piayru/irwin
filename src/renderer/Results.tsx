@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type CSSProperties,
 } from "react";
 import { X } from "lucide-react";
 import { useVirtualizer, defaultRangeExtractor } from "@tanstack/react-virtual";
@@ -19,7 +20,7 @@ import {
 } from "./table-tools";
 import { bsonType, type FilterAction } from "../shared/exploration";
 import type { TableLayout } from "../shared/workspace";
-import type { Row, Settings } from "../shared/contracts";
+import type { Row, Settings, ShellResult } from "../shared/contracts";
 import { CodeEditor } from "./Editor";
 import { api, useUi } from "./ui";
 import { prettyDocument, shellJsonLanguage } from "./json-format";
@@ -34,14 +35,27 @@ import {
 import { queryResultNotice, type QueryState } from "./query-state";
 import { gridScrollOffset, moveGridSelection } from "./grid-keyboard";
 import { label, editedValue } from "./result-values";
+import { resolveViewStyles } from "./appearance";
 
 export { prettyDocument } from "./json-format";
 export { label, editedValue } from "./result-values";
 
-function needsCellPreview(text: string, columnWidth: number) {
+function needsCellPreview(
+  text: string,
+  columnWidth: number,
+  badge: string,
+  fontSize: number,
+  paddingX: number,
+) {
   const visibleCharacterBudget = Math.max(
-    16,
-    Math.floor((columnWidth - 24) / 7),
+    0,
+    Math.floor(
+      (columnWidth -
+        paddingX * 2 -
+        badge.length * Math.max(10, fontSize - 2) * 0.6 -
+        16) /
+        (fontSize * 0.6),
+    ),
   );
   return text.includes("\n") || text.length > visibleCharacterBudget;
 }
@@ -77,6 +91,52 @@ function treeType(value: any, documentRoot = false) {
         missing: "Missing",
       } as Record<string, string>
     )[typeLabel(value)] || typeLabel(value)
+  );
+}
+
+const tableScalarTypes: Record<string, readonly [string, string]> = {
+  $numberInt: ["Int", "Int32"],
+  $numberLong: ["Long", "Int64"],
+  $numberDouble: ["Dbl", "Double"],
+  $numberDecimal: ["Dec", "Decimal128"],
+  $oid: ["ObjId", "ObjectId"],
+  $date: ["Date", "Date"],
+  $binary: ["Bin", "Binary"],
+  $timestamp: ["TS", "Timestamp"],
+  $regularExpression: ["Regex", "Regular expression"],
+  $minKey: ["Min", "MinKey"],
+  $maxKey: ["Max", "MaxKey"],
+  $undefined: ["Undef", "Undefined"],
+  $symbol: ["Sym", "Symbol"],
+  $code: ["Code", "JavaScript code"],
+  $dbPointer: ["Ref", "DBPointer"],
+};
+
+function tableType(value: any): readonly [string, string] {
+  if (value === undefined) return ["Missing", "Missing field"];
+  if (value === null) return ["Null", "Null"];
+  if (Array.isArray(value)) return ["Arr", "Array"];
+  if (typeof value === "object") {
+    if (isExtendedJsonScalar(value)) {
+      if (value.$binary?.subType === "04") return ["UUID", "UUID"];
+      return tableScalarTypes[Object.keys(value)[0]];
+    }
+    const keys = Object.keys(value);
+    if (keys.length === 2 && keys.includes("$code") && keys.includes("$scope"))
+      return ["Code", "JavaScript code with scope"];
+    return ["Obj", "Object"];
+  }
+  return (
+    (
+      {
+        string: ["Str", "String"],
+        number: ["Num", "Number"],
+        boolean: ["Bool", "Boolean"],
+      } as const
+    )[typeof value as "string" | "number" | "boolean"] || [
+      typeof value,
+      typeof value,
+    ]
   );
 }
 
@@ -152,7 +212,9 @@ function TreeNode({
       >
         <div
           className="tree-key"
-          style={{ paddingLeft: `${depth * 18 + 6}px` }}
+          style={{
+            paddingLeft: `calc(${depth} * var(--tree-indent, 18px) + var(--tree-key-padding, 6px))`,
+          }}
         >
           <span className="tree-arrow">
             {expandable ? (open ? "▾" : "▸") : "·"}
@@ -198,6 +260,7 @@ type ResultsProps = {
   onFilter?: (path: string, value: any, action: FilterAction) => void;
   busy?: boolean;
   queryState?: QueryState;
+  shellOutcome?: Pick<ShellResult, "kind" | "value" | "output">;
   rows: Row[];
   view: string;
   theme: Settings["theme"];
@@ -235,19 +298,15 @@ export function Results({
   t,
   busy = false,
   queryState = "idle",
+  shellOutcome,
   initialLayout,
   onLayoutChange,
   onFilter,
 }: ResultsProps) {
   const ui = useUi();
-  const rowHeight =
-    ui.longTextDisplay === "wrap"
-      ? ui.rowDensity === "compact"
-        ? 42
-        : 48
-      : ui.rowDensity === "compact"
-        ? 28
-        : 36;
+  const typography = resolveViewStyles(ui);
+  const rowHeight = typography.table.rowHeight;
+  const headerHeight = Math.max(36, typography.table.lineHeight + 12);
   const rememberedLayout = initialTableLayout(
     initialLayout,
     autoFitTableColumns,
@@ -319,7 +378,7 @@ export function Results({
     const starts: number[] = [];
     const documents = rows.map((row) => {
       const document = prettyDocument(JSON.parse(row.ejson), {
-        indent: ui.tabWidth,
+        indent: typography.json.tabWidth,
       });
       starts.push(line);
       line += document.split("\n").length;
@@ -329,7 +388,7 @@ export function Results({
       jsonText: "[\n" + documents.join(",\n") + "\n]",
       jsonDocumentStarts: starts,
     };
-  }, [rows, ui.tabWidth]);
+  }, [rows, typography.json.tabWidth]);
   const columns = useMemo(
     () => tableColumns(docs, expanded, order),
     [docs, expanded, order],
@@ -385,7 +444,12 @@ export function Results({
       Object.fromEntries(
         columns.map((column) => [
           column,
-          docs.map((document) => label(cellValue(document, column), ui)),
+          docs.map((document) => {
+            const value = cellValue(document, column);
+            const prefix =
+              ui.bsonTypeLabels === "always" ? `${tableType(value)[0]}  ` : "";
+            return prefix + label(value, ui);
+          }),
         ]),
       ),
     [columns, docs, ui],
@@ -400,7 +464,12 @@ export function Results({
       !busy &&
       columns.length > 0;
     const fitted = shouldFit
-      ? fitInitialTableColumnWidths(columns, tableText)
+      ? fitInitialTableColumnWidths(
+          columns,
+          tableText,
+          typography.table.fontSize,
+          typography.table.paddingX,
+        )
       : undefined;
     if (shouldFit) didInitialTableFit.current = true;
     setWidths((old) => {
@@ -478,11 +547,11 @@ export function Results({
     const viewport = scroll.current;
     if (!reveal || !viewport) return;
     viewport.scrollTop = gridScrollOffset(
-      rowHeight + next.row * rowHeight,
+      headerHeight + next.row * rowHeight,
       rowHeight,
       viewport.scrollTop,
       viewport.clientHeight,
-      rowHeight,
+      headerHeight,
     );
     if (!pinned.includes(next.field)) {
       const index = Math.max(0, visibleColumns.indexOf(next.field));
@@ -506,6 +575,46 @@ export function Results({
   };
   const toggle = (list: string[], key: string) =>
     list.includes(key) ? list.filter((v) => v !== key) : [...list, key];
+  if (
+    !rows.length &&
+    !busy &&
+    queryState === "success" &&
+    shellOutcome?.kind &&
+    shellOutcome.kind !== "documents"
+  ) {
+    let value = shellOutcome.output.join("\n");
+    if (shellOutcome.value !== undefined) {
+      try {
+        value = prettyDocument(JSON.parse(shellOutcome.value), {
+          indent: typography.json.tabWidth,
+        });
+      } catch {
+        value = shellOutcome.value;
+      }
+    }
+    return (
+      <div className="shell-command-result" role="status">
+        <strong>
+          {shellOutcome.kind === "value"
+            ? t("命令回傳值", "Command result")
+            : t("命令已完成", "Command completed")}
+        </strong>
+        {value ? (
+          <pre
+            style={{
+              fontFamily: typography.json.fontFamily,
+              fontSize: typography.json.fontSize,
+              lineHeight: `${typography.json.lineHeight}px`,
+            }}
+          >
+            {value}
+          </pre>
+        ) : (
+          <p>{t("這個命令沒有回傳值。", "This command returned no value.")}</p>
+        )}
+      </div>
+    );
+  }
   if (!rows.length)
     return (
       <div className="result-empty" role="status">
@@ -545,7 +654,28 @@ export function Results({
       </div>
     );
   return (
-    <div className="results-view" onClick={() => setContext(undefined)}>
+    <div
+      className="results-view"
+      onClick={() => setContext(undefined)}
+      style={
+        {
+          "--table-font": typography.table.fontFamily,
+          "--table-font-size": `${typography.table.fontSize}px`,
+          "--table-line-height": `${typography.table.lineHeight}px`,
+          "--table-padding-x": `${typography.table.paddingX}px`,
+          "--table-padding-y": `${typography.table.paddingY}px`,
+          "--table-row-height": `${rowHeight}px`,
+          "--table-header-height": `${headerHeight}px`,
+          "--tree-font": typography.tree.fontFamily,
+          "--tree-font-size": `${typography.tree.fontSize}px`,
+          "--tree-line-height": `${typography.tree.lineHeight}px`,
+          "--tree-padding-x": `${typography.tree.paddingX}px`,
+          "--tree-key-padding": `${typography.tree.keyPaddingX}px`,
+          "--tree-padding-y": `${typography.tree.paddingY}px`,
+          "--tree-indent": `${typography.tree.indent}px`,
+        } as CSSProperties
+      }
+    >
       {queryResultNotice(queryState, rows.length > 0) !== "none" && (
         <div
           className={`result-state-notice ${queryResultNotice(queryState, rows.length > 0)}`}
@@ -578,7 +708,7 @@ export function Results({
               )}
             </span>
             <span className="json-badge">
-              {ui.tabWidth} spaces · Mongo Shell · BSON
+              {typography.json.tabWidth} spaces · Mongo Shell · BSON
             </span>
           </div>
           <div className="json-editor-surface">
@@ -697,7 +827,7 @@ export function Results({
               style={{
                 width: virtualCols.getTotalSize() + 52,
                 minWidth: "100%",
-                height: virtualRows.getTotalSize() + 36,
+                height: virtualRows.getTotalSize() + headerHeight,
               }}
             >
               <div className="grid-head" role="row" aria-rowindex={1}>
@@ -834,7 +964,7 @@ export function Results({
                   className={`grid-row ${selected?.row === row.index ? "selected-row" : ""}`}
                   role="row"
                   aria-rowindex={row.index + 2}
-                  style={{ top: row.start + 36, height: row.size }}
+                  style={{ top: row.start + headerHeight, height: row.size }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -867,17 +997,7 @@ export function Results({
                     const field = visibleColumns[col.index];
                     const value = cellValue(docs[row.index], field);
                     const displayText = label(value, ui);
-                    const valueType = typeLabel(value);
-                    const showTypeLabel = [
-                      "numberInt",
-                      "numberLong",
-                      "numberDouble",
-                      "numberDecimal",
-                      "date",
-                      "binary",
-                      "timestamp",
-                      "regularExpression",
-                    ].includes(valueType);
+                    const [shortType, fullType] = tableType(value);
                     const isSelected =
                       selected?.row === row.index && selected?.field === field;
                     const isEditing =
@@ -885,11 +1005,17 @@ export function Results({
                     const showPreview =
                       isSelected &&
                       !isEditing &&
-                      needsCellPreview(displayText, col.size);
+                      needsCellPreview(
+                        displayText,
+                        col.size,
+                        shortType,
+                        typography.table.fontSize,
+                        typography.table.paddingX,
+                      );
                     return (
                       <div
                         key={col.key}
-                        className={`grid-cell type-${typeLabel(value)} ${isSelected ? "selected-cell" : ""} ${pinned.includes(field) ? "pinned-cell" : ""} ${showPreview ? "has-cell-preview" : ""}`}
+                        className={`grid-cell type-${typeLabel(value)} ${isSelected ? "selected-cell" : ""} ${isEditing ? "editing-cell" : ""} ${pinned.includes(field) ? "pinned-cell" : ""} ${showPreview ? "has-cell-preview" : ""}`}
                         role="gridcell"
                         aria-colindex={col.index + 2}
                         style={{
@@ -999,13 +1125,14 @@ export function Results({
                           </>
                         ) : (
                           <span className="cell-value-line">
-                            {showTypeLabel &&
-                              (ui.bsonTypeLabels === "always" ||
-                                isSelected) && (
-                                <span className="cell-type-badge">
-                                  {treeType(value)}
-                                </span>
-                              )}
+                            {(ui.bsonTypeLabels === "always" || isSelected) && (
+                              <span
+                                className="cell-type-badge"
+                                title={fullType}
+                              >
+                                {shortType}
+                              </span>
+                            )}
                             <span className="cell-preview">{displayText}</span>
                           </span>
                         )}

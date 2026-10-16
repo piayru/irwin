@@ -32,6 +32,14 @@ Build first with `pnpm build`, then run the scenario relevant to your change on 
 
 The Windows packaging workflow runs the desktop scenario against its unpacked candidate using `WORKBENCH_EXECUTABLE`. For local source checks, leave that variable unset. Reports and screenshots are written only to ignored `.runtime/` storage. A nonzero exit indicates a failed scenario; review any `unverified` entries before recording acceptance, especially when the native clipboard is unavailable.
 
+Native scenarios close the actual BrowserWindow and require both window closure
+within 10 seconds and process exit with code 0 within another 30 seconds.
+The shared close helper lets Playwright detach its debugger through the normal
+quit lifecycle; it does not issue another quit RPC during teardown. Blocked
+window closure, a surviving process, and nonzero or signalled exits still fail
+acceptance. `tests/close-electron.test.ts` covers these boundaries and a closing
+inspector that never replies to its final RPC.
+
 `pnpm exec playwright install chromium` followed by `pnpm test:e2e:critical`
 runs the required renderer checks sequentially: release notes/download consent,
 progress and verification, restart confirmation and draft failure, Count state,
@@ -80,7 +88,54 @@ macOS update installation or Windows system policies that block unsigned apps.
 `node tests/e2e/cell-update-notices.mjs` runs the real App/CollectionTab/Results
 renderer with an isolated database IPC fixture. It verifies successful writes
 and rejected writes use five-second notices, do not open Output, and retain failed
-cell edits for retry. No real database is connected. `updates.mjs` also exercises
+cell edits for retry. It also checks prior query output stays collapsed and manual
+expansion survives a cell save. No real database is connected.
+
+`node tests/e2e/table-type-labels.mjs` covers compact labels for ordinary values
+and BSON scalar types, missing fields, pointer/keyboard selection, both display
+preferences, light/dark layouts, and unchanged ObjectId copy/string edit behavior.
+It uses the real Results component without a database connection.
+
+`node tests/e2e/themes.mjs` verifies the four additional palettes through the real
+workspace and settings dialog: preview/save/cancel, persisted System settings,
+dark/light Monaco modes, small-window footer access and text contrast on normal
+and selected table backgrounds. The database/settings IPC fixture is isolated.
+
+`node tests/e2e/custom-appearance.mjs` verifies per-theme picker/HEX customization,
+live preview, cancel/restore, saved reload, invalid input, dark/light column text,
+and independent Table/Tree/JSON typography. It checks virtual row alignment during
+keyboard navigation, actual Tree padding/indentation, JSON font/line spacing and
+indentation, small-window footer access, and that display changes send no document
+writes. It uses the real renderer with isolated settings/database IPC.
+`tests/appearance.test.ts` covers settings validation, safe CSS values, legacy
+defaults and row geometry; `tests/appearance-storage.test.ts` checks SQLite
+persistence and rejection of invalid updates. The native preferences suite also
+checks preview/cancel/save through Electron's real settings IPC.
+
+`tests/database-cancellation.test.ts` holds server-version detection pending and
+checks Find/Aggregation/preview cancellation, disconnection, and duplicate cursor
+identities without issuing database operations. `tests/transfers.test.ts` also
+checks that an invalid BSON export filter creates no partial archive and a
+corrected filter can export and restore the selected documents at the same path.
+`node tests/e2e/query-count.mjs` covers refreshing Count before Last page after
+additions/deletions, and prevents navigation on failed or stale count responses.
+
+The Shell cases in `tests/integration.test.ts` exercise real nested `$set` and
+`$addToSet` writes, repeated no-op updates, zero matches, and insert/replace/delete/
+bulk result rows. The native desktop suite verifies update counts appear in the
+main result grid, the empty-query message is absent, and Output stays closed.
+The integration cases also verify collection/legacy/client bulk counters against
+real writes while document reads retain Int32/Double/Long types, and check
+database switching before successful and failing commands.
+
+`node tests/e2e/shell-outcomes.mjs` uses isolated renderer IPC to verify scalar,
+print-only and empty-document results, successful operations with failed local
+history persistence, current database context and saved-query targets, normal
+Find isolation, and input locking during Shell cancellation. It is a required
+renderer release check. The native desktop suite additionally verifies actual
+database targets, history and database retention after a Shell reset.
+
+`updates.mjs` also exercises
 drag resizing/maximize/restore and HTML/Markdown notes with hostile scripts,
 event handlers and remote-resource tags.
 
@@ -116,7 +171,8 @@ See [the updater release contract](AUTO_UPDATES.md) for signing and bootstrap.
 MongoDB data and isolated user settings. It checks loaded versus all-matching
 exports, default filenames, BSON-preserving Node.js delivery, Python delivery,
 typed saved-query parameters, whole-pipeline import, stage input/output samples,
-team bundle preview/import, and persistent Explain baselines. Set
+team bundle preview/import, persistent Explain baselines, and successful diagnostic
+capture for long collection names with the full namespace preserved. Set
 `WORKBENCH_EXECUTABLE` to the unpacked candidate to test the packaged application.
 The receipt is `.runtime/developer-workflows.json`; screenshots and exported
 fixtures remain in `.runtime/workflows-*/`.

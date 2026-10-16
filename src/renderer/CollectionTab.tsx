@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { resolveViewStyles } from "./appearance";
 import {
   Play,
   Square,
@@ -18,8 +19,6 @@ import {
   Bookmark,
   FolderOpen,
   Braces,
-  Layers,
-  Pencil,
   Search,
   Download,
   FileSpreadsheet,
@@ -42,6 +41,7 @@ import type {
   Page,
   Profile,
   ShellDraft,
+  ShellResult,
 } from "../shared/contracts";
 import { CodeEditor, preloadCodeEditor } from "./Editor";
 import { QueryInput } from "./QueryInput";
@@ -69,6 +69,7 @@ import type { SavedQuery } from "../shared/saved-query";
 import { SavedQueryDialog } from "./SavedQueries";
 import { AIAssistantPanel } from "./AIAssistantPanel";
 import { AssistantDock } from "./AssistantDock";
+import { IndexManagerModal } from "./IndexManagerModal";
 import type { PreferenceSection } from "./preferences";
 export interface WorkspaceTab {
   id: string;
@@ -88,12 +89,6 @@ export type ShellDraftChange = {
   dirty: boolean;
   draft?: ShellDraft;
   discard?: boolean;
-};
-type IndexSettings = {
-  keys: string;
-  name: string;
-  unique: boolean;
-  expireAfterSeconds?: number;
 };
 export default function CollectionTab({
   tab,
@@ -124,8 +119,9 @@ export default function CollectionTab({
   onOpenPreferences?(section?: PreferenceSection): void;
   collectionNames?: string[];
 }) {
-  const { t, theme, language, tabWidth, autoRunOnOpen, jsonExpandedDepth } =
-    useUi();
+  const ui = useUi();
+  const { t, theme, language, autoRunOnOpen, jsonExpandedDepth } = ui;
+  const { tabWidth } = resolveViewStyles(ui).json;
   useEffect(() => {
     // Opening a query is explicit editor intent. Warm the module while the
     // workspace loads so JSON/edit does not pay the entire cold import cost.
@@ -136,6 +132,7 @@ export default function CollectionTab({
   const [view, setView] = useState(tab.state?.view || "table");
   const [showColumns, setShowColumns] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [queryState, setQueryState] = useState<QueryState>("idle");
   const [savingQuery, setSavingQuery] = useState<SavedQuery>();
   const [showDelivery, setShowDelivery] = useState(false),
@@ -145,8 +142,9 @@ export default function CollectionTab({
   const [outputHeight, setOutputHeight] = useState(
     tab.state?.outputHeight || 170,
   );
+  // Collection output is opt-in per session, even if an older workspace saved it open.
   const [outputCollapsed, setOutputCollapsed] = useState(
-    tab.state?.outputCollapsed || false,
+    tab.kind === "shell" ? (tab.state?.outputCollapsed ?? false) : true,
   );
   const [queryOptionsExpanded, setQueryOptionsExpanded] = useState(
     () => initialQueryLayout(tab.state).queryOptionsExpanded,
@@ -286,24 +284,19 @@ export default function CollectionTab({
   const { docEditor, setDocEditor, setDocError, setConflictServerDocument } =
     documentEditor;
   const [indexes, setIndexes] = useState<string>();
-  const [indexKeys, setIndexKeys] = useState('{"field":1}');
-  const [indexName, setIndexName] = useState("");
-  const [unique, setUnique] = useState(false);
-  const [ttl, setTtl] = useState("");
-  const [editingIndex, setEditingIndex] = useState<string>();
-  const [indexDeleteTarget, setIndexDeleteTarget] = useState<{
-    name: string;
-    keys: string;
-  }>();
-  const [indexDeleting, setIndexDeleting] = useState(false);
-  const [indexRebuildTarget, setIndexRebuildTarget] = useState<
-    IndexSettings & { oldName: string; oldKeys: string }
-  >();
-  const [indexRebuilding, setIndexRebuilding] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [freeMode, setFreeMode] = useState(
     tab.state?.freeMode ?? tab.kind === "shell",
   );
+  const shellMode = tab.kind === "shell" || freeMode;
+  const [shellDatabase, setShellDatabase] = useState(tab.database);
+  const shellDatabaseRef = useRef(tab.database);
+  const updateShellDatabase = useCallback((database: string) => {
+    shellDatabaseRef.current = database;
+    setShellDatabase(database);
+  }, []);
+  const [shellOutcome, setShellOutcome] =
+    useState<Pick<ShellResult, "kind" | "value" | "output">>();
   useEffect(() => setHasSelection(false), [freeMode, tab.id]);
   const appliedQuery = useRef("");
   useEffect(() => {
@@ -395,7 +388,7 @@ export default function CollectionTab({
     const draft: ShellDraft = {
       id: draftId,
       connectionId: tab.connectionId,
-      database: tab.database,
+      database: shellDatabase,
       collection: tab.collection,
       code,
       updatedAt: new Date().toISOString(),
@@ -415,6 +408,7 @@ export default function CollectionTab({
     tab.collection,
     tab.connectionId,
     tab.database,
+    shellDatabase,
     tab.id,
   ]);
   useEffect(
@@ -440,6 +434,12 @@ export default function CollectionTab({
     () =>
       api.subscribe((event) => {
         if (
+          event.type === "shell" &&
+          event.data.sessionId === shellId &&
+          typeof event.data.database === "string"
+        )
+          updateShellDatabase(event.data.database);
+        if (
           event.type === "connection" &&
           (event.data.allClosed ||
             (event.data.id === tab.connectionId && !event.data.connected))
@@ -458,7 +458,7 @@ export default function CollectionTab({
           );
         }
       }),
-    [tab.connectionId],
+    [tab.connectionId, shellId, updateShellDatabase],
   );
   const result = (incoming: Row[], append: boolean) => {
     setSelected(-1);
@@ -498,13 +498,15 @@ export default function CollectionTab({
     const g = ++generation.current;
     const started = performance.now();
     const activeQuery = { ...query, ...override };
+    let localRecordsSaved = true;
     try {
       if (tab.kind === "shell" || freeMode) {
+        const executionDatabase = shellDatabaseRef.current;
         if (!sessionReady.current) {
           await api.request("shellSessions.open", {
             sessionId: shellId,
             connectionId: tab.connectionId,
-            database: tab.database,
+            database: executionDatabase,
           });
           if (g !== generation.current) {
             await api.request("shellSessions.close", { sessionId: shellId });
@@ -521,16 +523,35 @@ export default function CollectionTab({
               code: script,
             });
         if (g !== generation.current) return;
+        if (typeof res.database === "string") updateShellDatabase(res.database);
+        setShellOutcome({
+          kind: res.kind,
+          value: res.value,
+          output: res.output,
+        });
         result(res.rows, next);
         setOutput(res.output);
         setHasMore(res.hasMore);
         if (!next) {
-          await api.request("history.save", { ...target, code: script });
+          await api
+            .request("history.save", {
+              ...target,
+              database: executionDatabase,
+              collection: "",
+              code: script,
+            })
+            .catch(() => {
+              localRecordsSaved = false;
+            });
           if (draftId && !selectedOnly) {
             draftBaseline.current = code;
             draftRevision.current++;
             onShellDraftChange?.(tab.id, { dirty: false, discard: true });
-            void api.request("shellDrafts.delete", { id: draftId });
+            await api
+              .request("shellDrafts.delete", { id: draftId })
+              .catch(() => {
+                localRecordsSaved = false;
+              });
           }
         }
       } else {
@@ -557,14 +578,27 @@ export default function CollectionTab({
         setPageIndex(requestedPage);
         setHasMore(res.hasMore);
         if (!next)
-          await api.request("history.save", {
-            ...target,
-            code: `db.getCollection(${JSON.stringify(tab.collection)}).find(${activeQuery.filter}, ${activeQuery.projection}).sort(${activeQuery.sort})`,
-          });
+          await api
+            .request("history.save", {
+              ...target,
+              code: `db.getCollection(${JSON.stringify(tab.collection)}).find(${activeQuery.filter}, ${activeQuery.projection}).sort(${activeQuery.sort})`,
+            })
+            .catch(() => {
+              localRecordsSaved = false;
+            });
       }
+      if (g !== generation.current) return;
       setElapsed(Math.round(performance.now() - started));
       setQueryState("success");
-      notify(t("查詢執行成功", "Query completed"));
+      notify(
+        localRecordsSaved
+          ? t("查詢執行成功", "Query completed")
+          : t(
+              "操作已完成，但歷史紀錄或本機草稿未能同步；不需要重新執行操作。",
+              "Operation completed, but history or local drafts could not be saved; do not repeat the operation.",
+            ),
+        !localRecordsSaved,
+      );
     } catch (e) {
       if (g === generation.current) {
         setQueryState("error");
@@ -581,9 +615,19 @@ export default function CollectionTab({
   const runToLast = async () => {
     if (busy || tab.kind !== "collection" || freeMode) return;
     try {
-      const total = Number(await api.request("queries.count", query));
+      const total = await countDocuments();
+      if (total === undefined) return;
       const lastPage = total > 0 ? Math.ceil(total / batchSize) - 1 : 0;
-      await run(false, { skip: lastPage * batchSize });
+      const skip = lastPage * batchSize;
+      if (skip >= 50000) {
+        notify(
+          t(
+            `提示：大幅度分頁跳轉（skip ${skip.toLocaleString()}）可能較慢，建議改用 {"_id":-1} 反向排序檢視最新文件。`,
+            `Note: Large pagination offset (skip ${skip.toLocaleString()}) may be slow; consider sorting by {"_id":-1} to view newest documents.`,
+          ),
+        );
+      }
+      await run(false, { skip });
     } catch (e) {
       notify(message(e), true);
     }
@@ -745,8 +789,10 @@ export default function CollectionTab({
     notify(t("文件已儲存", "Document saved"));
   };
   const cancel = async () => {
-    generation.current++;
-    setBusy(false);
+    if (cancelling) return;
+    setCancelling(true);
+    const g = ++generation.current;
+    setBusy(true);
     setHasMore(false);
     try {
       if (tab.kind === "shell" || freeMode) {
@@ -758,11 +804,16 @@ export default function CollectionTab({
             "Cancelled and reset Shell variables. Completed writes remain.",
           ),
         ]);
-      } else if (cursor.current)
+      } else if (cursor.current) {
         await api.request("queries.cancel", { cursorId: cursor.current });
+        cursor.current = "";
+      }
     } catch (e) {
       sessionReady.current = false;
       notify(message(e), true);
+    } finally {
+      setCancelling(false);
+      if (g === generation.current) setBusy(false);
     }
   };
   const edit = (row: number, field: string, value: any) => {
@@ -852,61 +903,6 @@ export default function CollectionTab({
       notify(message(e), true);
     }
   };
-  const deleteIndex = async () => {
-    if (!indexDeleteTarget || indexDeleting) return;
-    if (!ensureWritable()) return;
-    setIndexDeleting(true);
-    try {
-      await api.request("metadata.dropIndex", {
-        ...target,
-        name: indexDeleteTarget.name,
-      });
-      setIndexDeleteTarget(undefined);
-      await showIndexes();
-      notify(t("索引已刪除", "Index deleted"));
-    } catch (e) {
-      notify(message(e), true);
-    } finally {
-      setIndexDeleting(false);
-    }
-  };
-  const resetIndexEditor = () => {
-    setEditingIndex(undefined);
-    setIndexKeys('{"field":1}');
-    setIndexName("");
-    setUnique(false);
-    setTtl("");
-  };
-  const createIndex = async (settings: IndexSettings) => {
-    if (!ensureWritable()) return;
-    try {
-      await api.request("metadata.createIndex", { ...target, ...settings });
-      resetIndexEditor();
-      await showIndexes();
-      notify(t("索引已建立", "Index created"));
-    } catch (e) {
-      notify(message(e), true);
-    }
-  };
-  const rebuildIndex = async () => {
-    if (!indexRebuildTarget || indexRebuilding) return;
-    if (!ensureWritable()) return;
-    setIndexRebuilding(true);
-    try {
-      await api.request("metadata.editIndex", {
-        ...target,
-        ...indexRebuildTarget,
-      });
-      setIndexRebuildTarget(undefined);
-      resetIndexEditor();
-      await showIndexes();
-      notify(t("索引已重新建立", "Index rebuilt"));
-    } catch (e) {
-      notify(message(e), true);
-    } finally {
-      setIndexRebuilding(false);
-    }
-  };
   const explain = async () => {
     setShowExplain(true);
   };
@@ -943,11 +939,6 @@ export default function CollectionTab({
     transfer(allMatchingTransfer(query, format));
     setExportFormat(undefined);
   };
-  const encodedNumber = (value: any) => {
-    if (value && typeof value === "object")
-      return value.$numberInt ?? value.$numberLong ?? value.$numberDouble ?? "";
-    return value;
-  };
   const resizeOutput = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     setOutputCollapsed(false);
@@ -976,16 +967,14 @@ export default function CollectionTab({
         <span className="connection-dot" />
         {tab.connectionName}
         <span>/</span>
-        {tab.database}
-        {tab.collection && (
+        {shellMode ? shellDatabase : tab.database}
+        {!shellMode && tab.collection && (
           <>
             <span>/</span>
             <strong>{tab.collection}</strong>
           </>
         )}
-        <span className="badge">
-          {tab.kind === "shell" ? "MONGOSH" : "COLLECTION"}
-        </span>
+        <span className="badge">{shellMode ? "MONGOSH" : "COLLECTION"}</span>
         {profile && (
           <span className={`environment-badge ${profile.environment}`}>
             {profile.environment.toUpperCase()}
@@ -1153,7 +1142,7 @@ export default function CollectionTab({
               className="icon"
               aria-label={t("停止", "Stop")}
               title={t("停止", "Stop")}
-              disabled={!busy && !hasMore}
+              disabled={cancelling || (!busy && !hasMore)}
               onClick={() => void cancel()}
             >
               <Square size={13} />
@@ -1204,13 +1193,13 @@ export default function CollectionTab({
                   onClick={() =>
                     setSavingQuery({
                       id: crypto.randomUUID(),
-                      name: `${tab.database}.${tab.collection || "shell"}`,
+                      name: `${shellMode ? shellDatabase : tab.database}.${shellMode ? "shell" : tab.collection || "shell"}`,
                       group: "",
                       description: "",
                       source: {
                         connectionName: tab.connectionName,
-                        database: tab.database,
-                        collection: tab.collection,
+                        database: shellMode ? shellDatabase : tab.database,
+                        collection: shellMode ? "" : tab.collection,
                       },
                       query: {
                         mode:
@@ -1461,6 +1450,7 @@ export default function CollectionTab({
               }
               busy={busy}
               queryState={queryState}
+              shellOutcome={shellMode ? shellOutcome : undefined}
               rows={rows}
               view={view}
               theme={theme}
@@ -1592,7 +1582,10 @@ export default function CollectionTab({
                   aria-label={t("最後一頁", "Last page")}
                   title={t("最後一頁", "Last page")}
                   disabled={
-                    busy || !rows.length || (!hasMore && pageIndex === 0)
+                    busy ||
+                    counting ||
+                    !rows.length ||
+                    (!hasMore && pageIndex === 0)
                   }
                   onClick={() => void runToLast()}
                 >
@@ -1819,241 +1812,15 @@ export default function CollectionTab({
         </Modal>
       )}
       {indexes !== undefined && (
-        <Modal
-          wide
-          title={`${t("索引管理", "Indexes")} · ${tab.collection}`}
+        <IndexManagerModal
+          tab={tab}
+          indexes={indexes}
+          readOnly={readOnly}
+          ensureWritable={ensureWritable}
+          refreshIndexes={showIndexes}
           close={() => setIndexes(undefined)}
-        >
-          <div className="index-list">
-            {JSON.parse(indexes).map((i: any) => (
-              <div className="index-row" key={i.name}>
-                <Layers size={17} />
-                <div>
-                  <strong>{i.name}</strong>
-                  <code>{JSON.stringify(i.key)}</code>
-                </div>
-                <span className="badge">{i.unique ? "UNIQUE" : "INDEX"}</span>
-                <button
-                  className="icon"
-                  disabled={readOnly || i.name === "_id_"}
-                  aria-label={`${t("編輯索引", "Edit index")} ${i.name}`}
-                  title={t("編輯索引", "Edit index")}
-                  onClick={() => {
-                    setEditingIndex(i.name);
-                    setIndexKeys(JSON.stringify(i.key));
-                    setIndexName(i.name);
-                    setUnique(Boolean(i.unique));
-                    setTtl(
-                      i.expireAfterSeconds === undefined
-                        ? ""
-                        : String(encodedNumber(i.expireAfterSeconds)),
-                    );
-                  }}
-                >
-                  <Pencil size={15} />
-                </button>
-                <button
-                  className="icon"
-                  disabled={readOnly || i.name === "_id_"}
-                  aria-label={`${t("刪除索引", "Delete index")} ${i.name}`}
-                  title={t("刪除索引", "Delete index")}
-                  onClick={() =>
-                    setIndexDeleteTarget({
-                      name: i.name,
-                      keys: JSON.stringify(i.key),
-                    })
-                  }
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <h3>
-            {editingIndex
-              ? t("編輯索引", "Edit index")
-              : t("新增索引", "Create index")}
-          </h3>
-          <div className="form-grid">
-            <Field full label="Keys (JSON)">
-              <input
-                disabled={readOnly}
-                value={indexKeys}
-                onChange={(e) => setIndexKeys(e.target.value)}
-              />
-            </Field>
-            <Field label={t("名稱（可省略）", "Name (optional)")}>
-              <input
-                disabled={readOnly}
-                value={indexName}
-                onChange={(e) => setIndexName(e.target.value)}
-              />
-            </Field>
-            <Field label="TTL seconds (optional)">
-              <input
-                type="number"
-                min={0}
-                disabled={readOnly}
-                value={ttl}
-                onChange={(e) => setTtl(e.target.value)}
-              />
-            </Field>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                disabled={readOnly}
-                checked={unique}
-                onChange={(e) => setUnique(e.target.checked)}
-              />
-              Unique
-            </label>
-            <button
-              className="primary"
-              disabled={readOnly}
-              onClick={async () => {
-                const settings: IndexSettings = {
-                  keys: indexKeys,
-                  name: indexName,
-                  unique,
-                  ...(ttl ? { expireAfterSeconds: Number(ttl) } : {}),
-                };
-                if (editingIndex) {
-                  const current = JSON.parse(indexes).find(
-                    (index: { name: string; key: unknown }) =>
-                      index.name === editingIndex,
-                  );
-                  setIndexRebuildTarget({
-                    ...settings,
-                    oldName: editingIndex,
-                    oldKeys: JSON.stringify(current?.key ?? {}),
-                  });
-                } else {
-                  await createIndex(settings);
-                }
-              }}
-            >
-              {editingIndex
-                ? t("儲存變更", "Save changes")
-                : t("建立", "Create")}
-            </button>
-          </div>
-        </Modal>
-      )}
-      {indexDeleteTarget && (
-        <Modal
-          title={t("刪除索引", "Delete index")}
-          close={() => {
-            if (!indexDeleting) setIndexDeleteTarget(undefined);
-          }}
-          footer={
-            <>
-              <button
-                disabled={indexDeleting}
-                onClick={() => setIndexDeleteTarget(undefined)}
-              >
-                {t("取消", "Cancel")}
-              </button>
-              <button
-                className="danger"
-                disabled={indexDeleting}
-                onClick={() => void deleteIndex()}
-              >
-                {indexDeleting
-                  ? t("刪除中…", "Deleting…")
-                  : t("刪除索引", "Delete index")}
-              </button>
-            </>
-          }
-        >
-          <p>
-            {t(
-              "這會移除索引，後續查詢可能變慢。請確認目標後再繼續。",
-              "This removes the index and can slow later queries. Confirm the target before continuing.",
-            )}
-          </p>
-          <dl className="confirmation-details">
-            <div>
-              <dt>{t("連線", "Connection")}</dt>
-              <dd>{tab.connectionName}</dd>
-            </div>
-            <div>
-              <dt>{t("Collection", "Collection")}</dt>
-              <dd>
-                {tab.database}.{tab.collection}
-              </dd>
-            </div>
-            <div>
-              <dt>{t("索引", "Index")}</dt>
-              <dd>{indexDeleteTarget.name}</dd>
-            </div>
-            <div>
-              <dt>{t("欄位", "Keys")}</dt>
-              <dd>
-                <code>{indexDeleteTarget.keys}</code>
-              </dd>
-            </div>
-          </dl>
-        </Modal>
-      )}
-      {indexRebuildTarget && (
-        <Modal
-          title={t("重新建立索引", "Rebuild index")}
-          close={() => {
-            if (!indexRebuilding) setIndexRebuildTarget(undefined);
-          }}
-          footer={
-            <>
-              <button
-                disabled={indexRebuilding}
-                onClick={() => setIndexRebuildTarget(undefined)}
-              >
-                {t("取消", "Cancel")}
-              </button>
-              <button
-                className="danger"
-                disabled={indexRebuilding}
-                onClick={() => void rebuildIndex()}
-              >
-                {indexRebuilding
-                  ? t("重新建立中…", "Rebuilding…")
-                  : t("重新建立索引", "Rebuild index")}
-              </button>
-            </>
-          }
-        >
-          <p>
-            {t(
-              "更新索引會先刪除既有索引，再以新設定建立。這段期間查詢可能變慢。",
-              "Updating an index deletes the current index before creating the new one. Queries can be slower during that interval.",
-            )}
-          </p>
-          <dl className="confirmation-details">
-            <div>
-              <dt>{t("連線", "Connection")}</dt>
-              <dd>{tab.connectionName}</dd>
-            </div>
-            <div>
-              <dt>{t("Collection", "Collection")}</dt>
-              <dd>
-                {tab.database}.{tab.collection}
-              </dd>
-            </div>
-            <div>
-              <dt>{t("原索引", "Current index")}</dt>
-              <dd>
-                <code>
-                  {indexRebuildTarget.oldName} {indexRebuildTarget.oldKeys}
-                </code>
-              </dd>
-            </div>
-            <div>
-              <dt>{t("新欄位", "New keys")}</dt>
-              <dd>
-                <code>{indexRebuildTarget.keys}</code>
-              </dd>
-            </div>
-          </dl>
-        </Modal>
+          notify={notify}
+        />
       )}
     </div>
   );

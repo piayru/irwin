@@ -284,6 +284,10 @@ export class UsersRolesService {
     return safeUser(user);
   }
 
+  private writeConcern(profile?: Pick<Profile, "writeConcern">) {
+    return { w: profile?.writeConcern === "1" ? 1 : ("majority" as const) };
+  }
+
   createUser(
     client: MongoClient,
     input: {
@@ -292,6 +296,7 @@ export class UsersRolesService {
       password: string;
       roles: UserRoleReference[];
     },
+    profile?: Pick<Profile, "writeConcern">,
   ) {
     if (input.authDatabase === "local")
       throw new Error("MongoDB users cannot be created in the local database.");
@@ -302,18 +307,19 @@ export class UsersRolesService {
         role: role.role,
         db: role.database,
       })),
-      writeConcern: { w: "majority" },
+      writeConcern: this.writeConcern(profile),
     });
   }
 
   setPassword(
     client: MongoClient,
     input: { authDatabase: string; username: string; password: string },
+    profile?: Pick<Profile, "writeConcern">,
   ) {
     return client.db(input.authDatabase).command({
       updateUser: input.username,
       pwd: input.password,
-      writeConcern: { w: "majority" },
+      writeConcern: this.writeConcern(profile),
     });
   }
 
@@ -325,11 +331,12 @@ export class UsersRolesService {
       role: string;
       database: string;
     },
+    profile?: Pick<Profile, "writeConcern">,
   ) {
     return client.db(input.authDatabase).command({
       grantRolesToUser: input.username,
       roles: [{ role: input.role, db: input.database }],
-      writeConcern: { w: "majority" },
+      writeConcern: this.writeConcern(profile),
     });
   }
 
@@ -341,11 +348,12 @@ export class UsersRolesService {
       role: string;
       database: string;
     },
+    profile?: Pick<Profile, "writeConcern">,
   ) {
     return client.db(input.authDatabase).command({
       revokeRolesFromUser: input.username,
       roles: [{ role: input.role, db: input.database }],
-      writeConcern: { w: "majority" },
+      writeConcern: this.writeConcern(profile),
     });
   }
 
@@ -380,7 +388,7 @@ export class UsersRolesService {
       throw new Error("You cannot remove the account used by this connection.");
     return client.db(input.authDatabase).command({
       dropUser: input.username,
-      writeConcern: { w: "majority" },
+      writeConcern: this.writeConcern(profile),
     });
   }
 }

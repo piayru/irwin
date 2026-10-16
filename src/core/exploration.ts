@@ -37,11 +37,15 @@ function omit(doc: any, paths: string[]) {
   return doc;
 }
 function diff(a: any, b: any, path = "", result: string[] = []): string[] {
-  if (result.length >= 100 || canonical(a) === canonical(b)) return result;
+  if (result.length >= 100 || Object.is(a, b)) return result;
   if (bsonType(a) === "Object" && bsonType(b) === "Object") {
-    for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (result.length >= 100) break;
       diff(a[key], b[key], path ? `${path}.${key}` : key, result);
-  } else result.push(path || "(document)");
+    }
+  } else if (canonical(a) !== canonical(b)) {
+    result.push(path || "(document)");
+  }
   return result;
 }
 export class ExplorationService {
