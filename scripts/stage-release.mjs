@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { resolve, join, dirname, basename } from "node:path";
 import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const arg = (key, fallback) => {
@@ -207,7 +208,23 @@ try {
     sums.push(`${await hash(join(temporary, name))}  ${name}`);
   await writeFile(join(temporary, "SHA256SUMS.txt"), sums.join("\n") + "\n");
   // rename fails if output already contains a prior draft; never overwrite it.
-  await rename(temporary, output);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(temporary, output);
+      break;
+    } catch (error) {
+      // Windows scanners may briefly retain a newly written installer handle.
+      // Keep the atomic rename and fail after a bounded retry; never copy over
+      // an existing draft or ignore a permanent staging failure.
+      if (
+        process.platform !== "win32" ||
+        !["EPERM", "EBUSY"].includes(error.code) ||
+        attempt === 4
+      )
+        throw error;
+      await delay(50 * 2 ** attempt);
+    }
+  }
   console.log(
     `Staged verified draft ${pkg.version}: ${artifacts.length} installers. Not published.`,
   );

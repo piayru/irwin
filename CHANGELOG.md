@@ -4,6 +4,8 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.4 — 2026-10-16
+
 ### Improvements
 
 - Add per-theme custom palettes with color pickers, HEX input, live preview, individual resets and explicit save/cancel in Appearance preferences.
