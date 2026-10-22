@@ -3,7 +3,9 @@ import { mkdir } from "node:fs/promises";
 import { expect } from "@playwright/test";
 import { preferenceFixture } from "./helpers/preference-fixture.mjs";
 
-const { server, browser, page, errors } = await preferenceFixture();
+const { server, browser, page, errors } = await preferenceFixture({
+  settingsWriteDelayMS: 250,
+});
 try {
   const dialog = page.locator("dialog.preferences-modal");
   const open = async (section = "appearance") => {
@@ -17,6 +19,12 @@ try {
     dialog.getByRole("tab", { name: "Custom colors", exact: true }).click();
   const save = () =>
     dialog.getByRole("button", { name: "Save settings", exact: true });
+  const saveAndWait = async () => {
+    await save().click();
+    // Clicking starts async IPC; wait for acknowledgement before reloading or
+    // inspecting storage. Live preview alone does not prove persistence.
+    await expect(dialog).not.toBeVisible();
+  };
   const cancel = () =>
     dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   const css = (key) =>
@@ -112,7 +120,7 @@ try {
     "#8bbba9",
   );
   await page.screenshot({ path: ".runtime/custom-appearance/colors.png" });
-  await save().click();
+  await saveAndWait();
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect.poll(() => css("--bg")).toBe("#112233");
   assert.equal((await snapshot()).themeOverrides.paper.background, "#fafafa");
@@ -130,7 +138,7 @@ try {
   await dialog
     .getByRole("button", { name: "Restore this theme's colors", exact: true })
     .click();
-  await save().click();
+  await saveAndWait();
   assert.equal((await snapshot()).themeOverrides.dark, undefined);
   assert.equal((await snapshot()).themeOverrides.paper.background, "#fafafa");
   // Re-open a result tab after reload. All changes below are presentation only.
@@ -173,7 +181,7 @@ try {
     .getByLabel("json Indent spaces", { exact: true })
     .selectOption("8");
   await page.screenshot({ path: ".runtime/custom-appearance/views.png" });
-  await save().click();
+  await saveAndWait();
   const first = page.locator(".grid-cell.type-string").first();
   await expect(first).toHaveCSS("font-family", "Arial, sans-serif");
   await expect(first).toHaveCSS("line-height", "30px");

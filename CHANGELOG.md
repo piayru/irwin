@@ -4,7 +4,7 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
-## 0.1.6 — 2026-10-22
+## 0.1.7 — 2026-10-22
 
 ### Improvements
 
@@ -19,6 +19,7 @@ User-visible changes are recorded here for each public release. Unreleased work 
 - Fetch the latest complete document before opening the whole-document JSON editor, avoiding stale or projected baselines while retaining conflict detection for subsequent concurrent changes and preserving BSON types.
 - Preserve sibling conditions alongside `$regex` and keep regex formatting consistent across query actions.
 - Suppress operator autocomplete inside strings, regular expressions and comments so suggestions cannot interfere with entering values or running a query.
+- Wait for completed settings persistence in appearance acceptance tests, including delayed replies; withhold the v0.1.6 candidate that failed this release gate.
 
 ## 0.1.5 — 2026-10-16
 

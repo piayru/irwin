@@ -1,6 +1,6 @@
 import { chromium, expect } from "@playwright/test";
 import { createServer } from "vite";
-export async function preferenceFixture() {
+export async function preferenceFixture({ settingsWriteDelayMS = 0 } = {}) {
   const server = await createServer({
     server: {
       host: "127.0.0.1",
@@ -20,7 +20,7 @@ export async function preferenceFixture() {
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.addInitScript(() => {
+    await page.addInitScript((settingsWriteDelayMS) => {
       window.settingsWrites = [];
       window.documentWrites = [];
       window.workbench = {
@@ -42,6 +42,9 @@ export async function preferenceFixture() {
                 },
               );
             case "settings.set":
+              await new Promise((resolve) =>
+                setTimeout(resolve, settingsWriteDelayMS),
+              );
               window.settingsWrites.push(payload);
               localStorage.setItem("qa-settings", JSON.stringify(payload));
               return settingsSchema.parse(payload);
@@ -99,7 +102,7 @@ export async function preferenceFixture() {
           }
         },
       };
-    });
+    }, settingsWriteDelayMS);
     await page.goto(server.resolvedUrls.local[0], {
       waitUntil: "domcontentloaded",
       timeout: 120000,
