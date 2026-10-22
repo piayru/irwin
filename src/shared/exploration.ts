@@ -1,4 +1,4 @@
-import { encode, object, validPath } from "./bson";
+import { encode, object, normalizeFilter, validPath } from "./bson";
 
 export function bsonType(value: any): string {
   if (value === undefined) return "Missing";
@@ -71,7 +71,7 @@ export function buildCellFilter(
     };
   const next = { [path]: condition };
   if (action === "only") return shellFilterValue(next);
-  const previous = JSON.parse(encode(object(current)));
+  const previous = JSON.parse(encode(object(normalizeFilter(current))));
   return shellFilterValue(
     Object.keys(previous).length
       ? { [action === "or" ? "$or" : "$and"]: [previous, next] }

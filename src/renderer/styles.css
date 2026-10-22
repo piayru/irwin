@@ -217,6 +217,154 @@
   background: transparent;
   text-align: left;
 }
+.filter-objectid-suggestion {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  text-align: left;
+}
+.modal.wide.filter-tools-modal {
+  width: min(980px, 94vw);
+}
+.modal.resizable.filter-tools-modal {
+  height: min(760px, calc(100vh - 48px));
+}
+.filter-tools-nav {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.filter-tools-nav button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.filter-tools-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.filter-tools-form,
+.filter-tools-output {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.filter-tools-form .field {
+  margin: 0;
+}
+.filter-tools-form input:not([type="checkbox"]),
+.filter-tools-form select,
+.filter-tools-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+.filter-tools-form textarea {
+  resize: vertical;
+}
+.filter-tools-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.filter-regex-flags {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.filter-regex-flags label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.filter-tools-form .filter-regex-flags input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+}
+.filter-tools-preview,
+.filter-regex-sample {
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  max-height: 360px;
+  min-height: 100px;
+  margin: 0;
+  font: 12px/1.6 var(--mono, monospace);
+}
+.filter-regex-sample {
+  min-height: 55px;
+  max-height: 150px;
+}
+.filter-regex-sample mark {
+  color: inherit;
+  background: var(--accent-soft);
+  border-bottom: 2px solid var(--accent);
+}
+.filter-tools-output strong {
+  font-size: 13px;
+}
+.filter-tools-output .checkbox {
+  font-size: 12px;
+}
+.filter-tools-validation {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+.filter-tools-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 14px 0;
+}
+.filter-diagnosis-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.filter-diagnosis-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.filter-diagnosis-row button {
+  flex-shrink: 0;
+}
+.filter-diagnosis p {
+  line-height: 1.6;
+}
+@media (max-width: 760px) {
+  .filter-tools-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .filter-tools-output {
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+  .filter-tools-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .query-suggestions small {
   color: var(--muted);
   max-width: 200px;

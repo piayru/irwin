@@ -89,6 +89,11 @@ jobs:
         run: pnpm test:e2e:workflows
         env:
           WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
+      - name: Verify Filter assistant in the packaged Windows application
+        if: runner.os == 'Windows'
+        run: node tests/e2e/filter-tools.mjs
+        env:
+          WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
       - name: Verify isolated Windows install, reinstall and uninstall
         if: runner.os == 'Windows'
         env:
@@ -123,6 +128,7 @@ jobs:
             release/release-manifest.json
             .runtime/desktop-smoke.json
             .runtime/developer-workflows.json
+            .runtime/filter-tools-results.json
             .runtime/renderer-checks.json
             .runtime/installation-*/acceptance.json
       - name: Preserve failure diagnostics

@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { encode, object } from "../src/shared/bson";
 import {
   editQueryIndentation,
   formatQuery,
@@ -6,7 +7,32 @@ import {
   hasQuerySort,
   queryKeyIntent,
   querySuggestionKeyIntent,
+  querySuggestionsAllowed,
 } from "../src/renderer/query-editing";
+
+test("completion does not cover Run when a shorthand filter ends in regex flags", () => {
+  for (const source of [
+    "name:/^ada$/i",
+    "name:/a[\\/]b/im",
+    "name:/unfinished",
+    'name:"Ada',
+    'name:["Ada',
+    "// comment",
+    "name:1, /* comment",
+  ])
+    expect(querySuggestionsAllowed(source, source.length)).toBe(false);
+  for (const source of ["name:{$g", "{na", '{"na', "name: /a/i, st"])
+    expect(querySuggestionsAllowed(source, source.length)).toBe(true);
+});
+
+test("formatting Mongo regex queries preserves escaped patterns and flags", () => {
+  const source = String.raw`{name:/^Ada/i,path:{$in:[/^a\/b\d+$/im,/測試/u]}}`;
+  const formatted = formatQuery(source);
+  expect(formatted).toContain("/^Ada/i");
+  expect(formatted).toContain(String.raw`/^a\/b\d+$/im`);
+  expect(encode(object(formatted))).toBe(encode(object(source)));
+  expect(() => formatQuery("{name:/Ada/g}")).toThrow(/flag.*g/i);
+});
 
 test("query keys keep Enter as a newline and reserve query execution for F5", () => {
   expect(queryKeyIntent("F5")).toBe("run");

@@ -21,6 +21,34 @@ const parameters = [
   { name: "owner", type: "objectId" as const, description: "" },
   { name: "n", type: "int64" as const, description: "" },
 ];
+test("saved queries accept blank filters and preserve regexes through parameters and driver export", () => {
+  expect(
+    resolveQueryParameters({ ...query, filter: " \n " }, [], {}).filter,
+  ).toBe("{}");
+  const filter = '{name:/^Ada/i,owner:{$irwinParam:"owner"}}';
+  const resolved = resolveQueryParameters(
+    { ...query, filter },
+    [parameters[0]],
+    {
+      owner: "6a4f6bffbed892721b94b460",
+    },
+  );
+  expect(object(resolved.filter).name.pattern).toBe("^Ada");
+  const input = {
+    database: "qa",
+    collection: "docs",
+    maxTimeMS: 30000,
+    query: { ...query, filter: " \t " },
+  };
+  expect(driverCode(input, "node")).toContain('"filter\\":{}');
+  expect(
+    driverCode(
+      { ...input, query: { ...query, filter: resolved.filter } },
+      "python",
+    ),
+  ).toContain("$regularExpression");
+});
+
 test("parameter substitution replaces structural placeholders and preserves BSON precision", () => {
   const resolved = resolveQueryParameters(query, parameters, {
     owner: "6a4f6bffbed892721b94b460",

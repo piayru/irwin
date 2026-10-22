@@ -119,6 +119,44 @@ test("full document replace succeeds when the original document is unchanged", a
   expect(decode(result.ejson).name).toBe("Grace");
 });
 
+test("whole JSON edits update a nested number without losing sibling fields or BSON types", async () => {
+  const coll = client.db("workbench_test").collection("nested_document_edits");
+  const id = new ObjectId();
+  await coll.insertOne({
+    _id: id,
+    settings: { count: new Int32(1), enabled: true },
+    items: [{ count: new Int32(1), label: "keep" }],
+    revision: Long.fromString("9007199254740993"),
+  });
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "nested_document_edits",
+  });
+  const original = (await database.run(input)).rows[0].ejson;
+  const { formatDocument } = await import("../src/renderer/json-format");
+  const document = formatDocument(original, 2).replace("count: 1", "count: 3");
+  const result = await database.execute("documents.replace", {
+    ...input,
+    original,
+    document,
+  });
+  const saved = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(saved!.settings.count._bsontype).toBe("Int32");
+  expect(saved!.settings.count.valueOf()).toBe(3);
+  expect(saved!.settings.enabled).toBe(true);
+  expect(saved!.items[0].count.valueOf()).toBe(1);
+  expect(saved!.revision.toString()).toBe("9007199254740993");
+  await coll.updateOne({ _id: id }, { $set: { "settings.enabled": false } });
+  await expect(
+    database.execute("documents.replace", {
+      ...input,
+      original: result.ejson,
+      document,
+    }),
+  ).rejects.toThrow("Conflict");
+});
+
 test("numeric shell constructors insert, replace, edit and query exact BSON values", async () => {
   const target = {
     connectionId: "test",
@@ -381,6 +419,153 @@ test("ambiguous array edits never write inferred BSON types", async () => {
   });
   const stored = await coll.findOne({ _id: id }, { promoteValues: false });
   expect(stored!.items.map((item: any) => item._bsontype)).toEqual(["Double"]);
+});
+
+test("Filter assistant predicates preserve types and distinguish empty values on MongoDB", async () => {
+  const {
+    buildRegexCondition,
+    buildListCondition,
+    buildObjectIdCondition,
+    buildDateCondition,
+    buildEmptyCondition,
+    combineFilterCondition,
+  } = await import("../src/shared/filter-tools");
+  const { runFilterDiagnosis } =
+    await import("../src/renderer/filter-diagnosis");
+  const coll = client.db("workbench_test").collection("filter_assistant_docs");
+  const id = new ObjectId();
+  await coll.insertMany([
+    {
+      _id: id,
+      name: "Ada",
+      code: "001",
+      state: null,
+      createdAt: new Date("2026-10-22T02:00:00Z"),
+      nested: [{ value: null }, { value: "" }, { value: [] }],
+    },
+    { name: "Grace", code: "002", createdAt: new Date("2026-10-23T02:00:00Z") },
+    { name: "ADA", code: "003", state: "" },
+    { name: "a/b42", code: "004", state: [] },
+    { name: "other", code: "005", state: [null, ""] },
+  ]);
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "filter_assistant_docs",
+  });
+  const names = async (filter: string) =>
+    (await database.run({ ...input, filter })).rows.map(
+      (row: any) => decode(row.ejson).name,
+    );
+  expect(await names("name:/^ada$/i")).toEqual(["Ada", "ADA"]);
+  expect(
+    await names(buildRegexCondition("name", String.raw`^a/b\d+$`, "")),
+  ).toEqual(["a/b42"]);
+  expect(
+    await names(
+      buildListCondition("code", "001\n002\n001", "string", "newline")
+        .condition,
+    ),
+  ).toEqual(["Ada", "Grace"]);
+  expect(await names(buildObjectIdCondition("_id", id.toHexString()))).toEqual([
+    "Ada",
+  ]);
+  const date = buildDateCondition("createdAt", {
+    start: "2026-10-22T08:00",
+    end: "2026-10-23T08:00",
+    zone: "+08:00",
+  });
+  expect(await names(combineFilterCondition('code:"001"', date))).toEqual([
+    "Ada",
+  ]);
+  for (const [kind, expected] of [
+    ["null", "Ada"],
+    ["missing", "Grace"],
+    ["emptyString", "ADA"],
+    ["emptyArray", "a/b42"],
+  ] as const)
+    expect(await names(buildEmptyCondition("state", kind))).toEqual([expected]);
+  expect(await names(buildEmptyCondition("nested.0.value", "null"))).toEqual([
+    "Ada",
+  ]);
+  expect(
+    await names(buildEmptyCondition("nested.1.value", "emptyString")),
+  ).toEqual(["Ada"]);
+  const diagnosis = await runFilterDiagnosis(
+    { ...input, filter: 'name:"Ada",code:"002"' },
+    {
+      read: (query) => database.run(query),
+      cancel: (id) => database.cancel(id),
+    },
+    new AbortController().signal,
+  );
+  expect(diagnosis.completion).toBe("complete");
+  expect(
+    diagnosis.results
+      .filter((result) => result.kind === "without")
+      .every((result) => result.matches),
+  ).toBe(true);
+});
+
+test("empty and whitespace-only filters read, count and explain all documents", async () => {
+  const coll = client.db("workbench_test").collection("empty_filter_docs");
+  await coll.insertMany([{ n: 1 }, { n: 2 }]);
+  for (const filter of ["", " \n\t "]) {
+    const input = querySchema.parse({
+      connectionId: "test",
+      database: "workbench_test",
+      collection: "empty_filter_docs",
+      filter,
+    });
+    expect((await database.run(input)).rows).toHaveLength(2);
+    await expect(database.execute("queries.count", input)).resolves.toBe(2);
+    const plan = decode(await database.execute("queries.explain", input));
+    expect(Number(plan.executionStats.nReturned)).toBe(2);
+  }
+});
+
+test("Mongo regex literals work in find, count and explain with escaped delimiters and arrays", async () => {
+  const coll = client.db("workbench_test").collection("regex_filter_docs");
+  await coll.insertMany([
+    { label: "Ada", path: "a/b42", note: "hello\nworld" },
+    { label: "ADA", path: "a/b9", note: "hello world" },
+    { label: "Grace", path: "other", note: "different" },
+  ]);
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "regex_filter_docs",
+    filter: String.raw`{label:{$in:[/^ada$/i,/^Missing$/]},path:/^a\/b\d+$/}`,
+  });
+  expect((await database.run(input)).rows).toHaveLength(2);
+  await expect(database.execute("queries.count", input)).resolves.toBe(2);
+  const plan = decode(await database.execute("queries.explain", input));
+  expect(Number(plan.executionStats.nReturned)).toBe(2);
+  expect(
+    (await database.run({ ...input, filter: "{note:/^hello.*world$/s}" })).rows,
+  ).toHaveLength(2);
+  expect(
+    (await database.run({ ...input, filter: "{note:/^world$/m}" })).rows,
+  ).toHaveLength(1);
+  expect(
+    (
+      await database.run({
+        ...input,
+        filter: '{label:{$regex:"^ada$",$options:"i",$nin:["Ada"]}}',
+      })
+    ).rows,
+  ).toHaveLength(1);
+  expect(
+    (
+      await database.run({
+        ...input,
+        filter: '{label:{$regex:/^ada$/i,$nin:["Ada"]}}',
+      })
+    ).rows,
+  ).toHaveLength(1);
+  await expect(
+    database.run({ ...input, filter: "{label:/ada/g}" }),
+  ).rejects.toThrow(/flag.*g/i);
 });
 
 test("count returns documents matching the current filter", async () => {

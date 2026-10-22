@@ -1,7 +1,84 @@
 import { parseExpression } from "@babel/parser";
-import { object } from "../shared/bson";
+import { decode, object, normalizeFilter } from "../shared/bson";
 
 export type QueryKeyIntent = "run" | "newline" | "indent" | "unindent";
+/** Completion text must not be inserted into string values, regexes or comments. */
+export function querySuggestionsAllowed(
+  text: string,
+  position: number,
+): boolean {
+  let state: "normal" | "string" | "regex" | "flags" | "line" | "block" =
+    "normal";
+  let quote = "",
+    escaped = false,
+    characterClass = false,
+    key = false,
+    previous = "";
+  const stack: string[] = [];
+  for (let index = 0; index < Math.min(position, text.length); index++) {
+    const char = text[index],
+      next = text[index + 1];
+    if (state === "line") {
+      if (char === "\n") state = "normal";
+      continue;
+    }
+    if (state === "block") {
+      if (char === "*" && next === "/") {
+        state = "normal";
+        index++;
+      }
+      continue;
+    }
+    if (state === "string") {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) {
+        state = "normal";
+        previous = quote;
+      }
+      continue;
+    }
+    if (state === "regex") {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "[") characterClass = true;
+      else if (char === "]") characterClass = false;
+      else if (char === "/" && !characterClass) state = "flags";
+      continue;
+    }
+    if (state === "flags") {
+      if (/[a-z]/i.test(char)) continue;
+      state = "normal";
+    }
+    if (char === "/" && next === "/") {
+      state = "line";
+      index++;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      state = "block";
+      index++;
+      continue;
+    }
+    if (char === "/" && (!previous || /[:\[,=(]/.test(previous))) {
+      state = "regex";
+      characterClass = false;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      key =
+        (!previous || /[{,]/.test(previous)) &&
+        (!stack.length || stack.at(-1) === "{");
+      quote = char;
+      state = "string";
+      continue;
+    }
+    if (char === "{" || char === "[") stack.push(char);
+    if (char === "}" || char === "]") stack.pop();
+    if (!/\s/.test(char)) previous = char;
+  }
+  return state === "normal" || (state === "string" && key);
+}
 export type QuerySuggestionIntent =
   | { type: "accept"; index: number }
   | { type: "move"; index: number }
@@ -105,7 +182,7 @@ export function editQueryIndentation(
 
 /** Format syntax, without evaluating JS or round-tripping numbers through JSON.parse. */
 export function formatQuery(text: string, indent = 2): string {
-  const root = parseExpression(text.trim() || "{}", { sourceType: "module" });
+  const root = parseExpression(normalizeFilter(text), { sourceType: "module" });
   if (root.type !== "ObjectExpression")
     throw new Error("Expected a query document { … }");
   const print = (node: any, depth: number): string => {
@@ -145,6 +222,11 @@ export function formatQuery(text: string, indent = 2): string {
         : "[]";
     }
     if (node.type === "StringLiteral") return JSON.stringify(node.value);
+    if (node.type === "RegExpLiteral") {
+      const literal = `/${node.pattern}/${node.flags}`;
+      decode(literal);
+      return literal;
+    }
     if (node.type === "NumericLiteral")
       return node.extra?.raw ?? String(node.value);
     if (node.type === "BooleanLiteral") return String(node.value);

@@ -19,6 +19,8 @@ The certificates and private key in `tests/fixtures/` are intentionally public, 
 
 Build first with `pnpm build`, then run the scenario relevant to your change on a native desktop with a graphical session. These are standalone Playwright Electron scripts, separate from `pnpm test`; run them sequentially to avoid clipboard and window-focus interference.
 
+`node tests/e2e/filter-tools.mjs` checks shorthand filters, a real disposable Regex preview worker (including a pathological pattern timeout), list-to-`$in`, confirmed ObjectId conversion, timezone ranges, distinct empty-value predicates, bounded opt-in no-result diagnosis, apply-without-execution, and narrow dark layout. It uses disposable MongoDB and isolated user data. Its receipt is `.runtime/filter-tools-results.json`; screenshots stay under `.runtime/screenshots/filter-tools-*.png`. `WORKBENCH_EXECUTABLE` selects an unpacked installer build; Windows packaging CI runs this scenario after packaging. It does not certify PCRE/browser parity or Cosmos DB behavior.
+
 | Command                                | Coverage                                                                                                                                                        |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `node tests/e2e/desktop.mjs`           | Connections, query/results workflow, export/import, mongosh cancellation and drafts, destructive-action confirmations, layout, preferences, and normal shutdown |

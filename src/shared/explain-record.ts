@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { compileReadOnlyPipeline } from "./aggregation";
-import { object } from "./bson";
+import { object, normalizeFilter } from "./bson";
 
 const documentText = z.string().max(1024 * 1024);
 const options = {
@@ -67,7 +67,11 @@ export function parseExplainRecord(value: unknown): ExplainRecord {
     throw new Error("Indexes must be an array");
   if (record.input.kind === "find")
     for (const key of ["filter", "sort", "projection"] as const)
-      object(record.input[key]);
+      object(
+        key === "filter"
+          ? normalizeFilter(record.input[key])
+          : record.input[key],
+      );
   else compileReadOnlyPipeline(record.input.stages);
   for (const key of ["hint", "collation"] as const)
     if (record.input[key].trim()) object(record.input[key]);

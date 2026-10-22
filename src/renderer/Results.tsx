@@ -260,6 +260,7 @@ type ResultsProps = {
   onFilter?: (path: string, value: any, action: FilterAction) => void;
   busy?: boolean;
   queryState?: QueryState;
+  onDiagnose?: () => void;
   shellOutcome?: Pick<ShellResult, "kind" | "value" | "output">;
   rows: Row[];
   view: string;
@@ -298,6 +299,7 @@ export function Results({
   t,
   busy = false,
   queryState = "idle",
+  onDiagnose,
   shellOutcome,
   initialLayout,
   onLayoutChange,
@@ -651,6 +653,11 @@ export function Results({
                     "Use a filter or Free command to explore your data.",
                   )}
         </p>
+        {!busy && queryState === "success" && onDiagnose && (
+          <button onClick={onDiagnose}>
+            {t("診斷無結果原因", "Diagnose no results")}
+          </button>
+        )}
       </div>
     );
   return (

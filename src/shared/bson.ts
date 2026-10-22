@@ -252,7 +252,7 @@ function restoreNumbers(value: any, original: any, path = "$"): any {
     );
   }
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
+  const restored = Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
       restoreNumbers(
@@ -262,6 +262,16 @@ function restoreNumbers(value: any, original: any, path = "$"): any {
       ),
     ]),
   );
+  // EJSON treats a string $regex as a legacy BSON wrapper and otherwise drops
+  // siblings such as $nin/$ne. A BSON regex operand preserves the query object.
+  if (
+    typeof restored.$regex === "string" &&
+    Object.keys(restored).some((key) => key !== "$regex" && key !== "$options")
+  )
+    restored.$regex = {
+      $regularExpression: { pattern: restored.$regex, options: "" },
+    };
+  return restored;
 }
 
 function numericLiteralText(node: any): string {
@@ -431,6 +441,18 @@ function shellValue(node: any): any {
         return node.value;
       case "NumericLiteral":
         return new ParsedNumber(numericLiteralText(node), node.loc?.start);
+      case "RegExpLiteral": {
+        const unsupported = node.flags.replace(/[imsu]/g, "");
+        if (unsupported)
+          throw new Error(
+            `Unsupported MongoDB regex flag(s): ${unsupported}. Use i, m, s or u; use $regex/$options for other MongoDB options.`,
+          );
+        // Keep source escapes and BSON options; never evaluate or match the
+        // expression in the renderer/main process.
+        return {
+          $regularExpression: { pattern: node.pattern, options: node.flags },
+        };
+      }
       case "Identifier":
         if (["NaN", "Infinity"].includes(node.name))
           return new ParsedNumber(node.name, node.loc?.start);
@@ -566,6 +588,29 @@ export function validateExtendedJson(raw: unknown) {
     for (const child of Object.values(v)) visit(child);
   };
   visit(raw);
+}
+// Only query filters allow empty input. Blank documents/updates remain errors.
+export function normalizeFilter(text: string): string {
+  if (!text.trim()) return "{}";
+  if (text.trimStart().startsWith("{")) return text;
+  const wrapped = `{${text}\n}`;
+  try {
+    const root = parseExpression(wrapped, { sourceType: "module" });
+    if (
+      root.type === "ObjectExpression" &&
+      root.properties.length &&
+      root.properties.every(
+        (property) =>
+          property.type === "ObjectProperty" &&
+          !property.computed &&
+          !property.shorthand,
+      )
+    )
+      return wrapped;
+  } catch {
+    /* Keep invalid input intact so the normal parser reports it. */
+  }
+  return text;
 }
 export function object(text: string, original?: unknown): Record<string, any> {
   const value = decode(text, original);

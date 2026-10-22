@@ -4,6 +4,22 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.6 — 2026-10-22
+
+### Improvements
+
+- Treat an empty Filter as `{}` and accept object properties without outer braces across Find, Count, Explain, exports and saved queries.
+- Support MongoDB regular-expression literals with validated flags, safe parsing and preserved BSON values.
+- Add a resizable Filter assistant for regular expressions, pasted lists as `$in`, explicit ObjectId conversion, timezone-aware date ranges and distinct null/missing/empty conditions. Preview changes before applying; applying never runs a query.
+- Diagnose empty results on request using bounded, cancellable existence probes, with suggested filters that remain editable before execution.
+- Validate the Filter assistant against the packaged Windows application during release builds.
+
+### Fixes
+
+- Fetch the latest complete document before opening the whole-document JSON editor, avoiding stale or projected baselines while retaining conflict detection for subsequent concurrent changes and preserving BSON types.
+- Preserve sibling conditions alongside `$regex` and keep regex formatting consistent across query actions.
+- Suppress operator autocomplete inside strings, regular expressions and comments so suggestions cannot interfere with entering values or running a query.
+
 ## 0.1.5 — 2026-10-16
 
 ### Improvements

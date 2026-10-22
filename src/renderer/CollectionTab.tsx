@@ -45,6 +45,7 @@ import type {
 } from "../shared/contracts";
 import { CodeEditor, preloadCodeEditor } from "./Editor";
 import { QueryInput } from "./QueryInput";
+import type { FilterTool } from "./FilterToolsDialog";
 import { useQueryCount } from "./use-query-count";
 import { QueryResultsStatus } from "./QueryResultsStatus";
 import {
@@ -54,7 +55,13 @@ import {
 } from "./query-editing";
 import { ExplainDialog } from "./ExplainDialog";
 import { buildCellFilter, fieldCatalog } from "../shared/exploration";
-import { decode, encode, getPath, validPath } from "../shared/bson";
+import {
+  decode,
+  encode,
+  getPath,
+  validPath,
+  normalizeFilter,
+} from "../shared/bson";
 import { DocumentEditorDialogs, useDocumentEditor } from "./DocumentEditor";
 import type { TabState, TableLayout } from "../shared/workspace";
 import { Results, prettyDocument } from "./Results";
@@ -159,6 +166,10 @@ export default function CollectionTab({
   const [elapsed, setElapsed] = useState(0);
   const [selected, setSelected] = useState(-1);
   const [filter, setFilter] = useState(tab.state?.filter || "{}");
+  const [filterAssistantRequest, setFilterAssistantRequest] = useState<{
+    tool: FilterTool;
+    id: string;
+  }>();
   const [sort, setSort] = useState(tab.state?.sort || "{}");
   const [projection, setProjection] = useState(tab.state?.projection || "{}");
   const [queryWidths, setQueryWidths] = useState(
@@ -223,10 +234,28 @@ export default function CollectionTab({
     tab.database,
     tab.collection,
   ]);
-  const completionFields = useMemo(
-    () => fieldCatalog(rows.slice(0, 100).map((row) => JSON.parse(row.ejson))),
-    [rows],
-  );
+  const fieldHintsCache = useRef<
+    { key: string; fields: ReturnType<typeof fieldCatalog> } | undefined
+  >(undefined);
+  const completionFields = useMemo(() => {
+    const fields = fieldCatalog(
+      rows
+        .filter(
+          (row) =>
+            row.source?.connectionId === tab.connectionId &&
+            row.source?.database === tab.database &&
+            row.source?.collection === tab.collection,
+        )
+        .slice(0, 100)
+        .map((row) => JSON.parse(row.ejson)),
+    );
+    if (fields.length) fieldHintsCache.current = { key: layoutKey, fields };
+    return fields.length
+      ? fields
+      : fieldHintsCache.current?.key === layoutKey
+        ? fieldHintsCache.current.fields
+        : [];
+  }, [rows, layoutKey]);
   const completions = {
     fields: completionFields,
     collections: collectionNames,
@@ -277,6 +306,7 @@ export default function CollectionTab({
   const pageIndexRef = useRef(0);
   const sessionReady = useRef(false);
   const generation = useRef(0);
+  const openingDocument = useRef(false);
   const draftBaseline = useRef(tab.initialCode || defaultCode);
   const draftRevision = useRef(0);
   const [exportFormat, setExportFormat] = useState<"csv" | "excel">();
@@ -316,7 +346,7 @@ export default function CollectionTab({
     setCode(
       value.mode === "shell"
         ? value.code
-        : `db.getCollection(${JSON.stringify(tab.collection)}).find(${value.filter || "{}"}, ${value.projection || "{}"}).sort(${value.sort || "{}"})`,
+        : `db.getCollection(${JSON.stringify(tab.collection)}).find(${normalizeFilter(value.filter)}, ${value.projection || "{}"}).sort(${value.sort || "{}"})`,
     );
     setFreeMode(value.mode === "shell");
     setQueryState("stale");
@@ -366,7 +396,7 @@ export default function CollectionTab({
   };
   const query: MongoQueryInput = {
     ...target,
-    filter,
+    filter: normalizeFilter(filter),
     sort,
     projection,
     skip: 0,
@@ -497,7 +527,11 @@ export default function CollectionTab({
     setBusy(true);
     const g = ++generation.current;
     const started = performance.now();
-    const activeQuery = { ...query, ...override };
+    const activeQuery = {
+      ...query,
+      ...override,
+      filter: normalizeFilter(override.filter ?? query.filter),
+    };
     let localRecordsSaved = true;
     try {
       if (tab.kind === "shell" || freeMode) {
@@ -708,19 +742,53 @@ export default function CollectionTab({
       submit: async () => {},
     });
   };
-  const editRow = (row: number) => {
-    if (!ensureWritable()) return;
-    setDocError("");
-    setConflictServerDocument(undefined);
-    const value = formatDocument(rows[row].ejson, tabWidth);
-    setDocEditor({
-      title: t("編輯文件", "Edit document"),
-      value,
-      originalValue: value,
-      originalEjson: rows[row].ejson,
-      submit: (value, original) => replaceRow(row, value, original),
-      numericReferenceEjson: rows[row].ejson,
-    });
+  const editRow = async (row: number) => {
+    if (!ensureWritable() || busy || openingDocument.current || docEditor)
+      return;
+    const snapshot = rows[row];
+    const source = snapshot?.source;
+    if (
+      !snapshot?.editable ||
+      !source ||
+      source.connectionId !== tab.connectionId ||
+      source.database !== tab.database ||
+      source.collection !== tab.collection
+    ) {
+      notify(
+        snapshot?.reason ||
+          t("請重新查詢後再編輯文件", "Run the query again before editing."),
+        true,
+      );
+      return;
+    }
+    const g = generation.current;
+    openingDocument.current = true;
+    try {
+      // A query row can be stale or projected. Full-document replacement needs
+      // a complete, current baseline, including fields hidden by the query.
+      const current = await api.request("documents.fetch", {
+        connectionId: source.connectionId,
+        database: source.database,
+        collection: source.collection,
+        original: snapshot.ejson,
+      });
+      if (g !== generation.current) return;
+      const value = formatDocument(current.ejson, tabWidth);
+      setDocError("");
+      setConflictServerDocument(undefined);
+      setDocEditor({
+        title: t("編輯文件", "Edit document"),
+        value,
+        originalValue: value,
+        originalEjson: current.ejson,
+        submit: (value, original) => replaceRow(row, value, original),
+        numericReferenceEjson: current.ejson,
+      });
+    } catch (e) {
+      if (g === generation.current) notify(message(e), true, true);
+    } finally {
+      openingDocument.current = false;
+    }
   };
   const copyRow = (row: number) => {
     if (!ensureWritable()) return;
@@ -1022,6 +1090,8 @@ export default function CollectionTab({
             >
               <QueryInput
                 label="FILTER"
+                diagnosticQuery={query}
+                assistantRequest={filterAssistantRequest}
                 value={filter}
                 onChange={setFilter}
                 context={completions}
@@ -1450,6 +1520,17 @@ export default function CollectionTab({
               }
               busy={busy}
               queryState={queryState}
+              onDiagnose={
+                tab.kind === "collection" && !freeMode
+                  ? () => {
+                      setResultFocus(false);
+                      setFilterAssistantRequest({
+                        tool: "diagnose",
+                        id: crypto.randomUUID(),
+                      });
+                    }
+                  : undefined
+              }
               shellOutcome={shellMode ? shellOutcome : undefined}
               rows={rows}
               view={view}

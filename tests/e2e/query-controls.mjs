@@ -103,6 +103,58 @@ try {
     timeout: 30000,
   });
   await check(
+    "Blank FILTER queries all documents and records a reusable empty object",
+    async () => {
+      const filter = active().getByLabel("FILTER", { exact: true });
+      for (const value of ["", " \n\t "]) {
+        await filter.fill(value);
+        await filter.press("F5");
+        await idle();
+        await expect(active().locator(".grid-row")).toHaveCount(3);
+        const history = await page.evaluate(() =>
+          window.workbench.request("history.list", {}),
+        );
+        expect(history[0].code).toContain(".find({},");
+      }
+      await filter.fill("{}");
+    },
+  );
+  await check(
+    "Regex FILTER formats, expands and queries without losing its flags",
+    async () => {
+      const filter = active().getByLabel("FILTER", { exact: true });
+      await filter.fill("{name:/^alpha$/i}");
+      await active()
+        .getByRole("button", { name: "Format FILTER", exact: true })
+        .click();
+      expect(await filter.inputValue()).toContain("/^alpha$/i");
+      await active()
+        .getByRole("button", { name: "Expand FILTER", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "FILTER editor",
+        exact: true,
+      });
+      await expect(dialog.locator(".monaco-editor")).toBeVisible();
+      await dialog.getByRole("button", { name: "Apply", exact: true }).click();
+      await filter.press("F5");
+      await idle();
+      await expect(active().locator(".grid-row")).toHaveCount(1);
+      await expect(active().locator(".grid-row")).toContainText("Alpha");
+      await filter.fill("{name:/alpha/g}");
+      await active()
+        .getByRole("button", { name: "Format FILTER", exact: true })
+        .click();
+      await expect(active().locator(".query-format-error")).toContainText(
+        "flag(s): g",
+      );
+      await filter.fill("{}");
+      await active().getByRole("button", { name: "Run", exact: true }).click();
+      await idle();
+      await expect(active().locator(".grid-row")).toHaveCount(3);
+    },
+  );
+  await check(
     "Repeated header sorting does not move or resize heterogeneous fields",
     async () => {
       const before = await layout();

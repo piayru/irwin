@@ -13,6 +13,7 @@ import {
   decode,
   getPath,
   object,
+  normalizeFilter,
   sameDocument,
   size,
 } from "../shared/bson";
@@ -248,7 +249,7 @@ export class DatabaseService {
       client
         .db(input.database)
         .collection(input.collection)
-        .find(object(input.filter), {
+        .find(object(normalizeFilter(input.filter)), {
           projection: object(input.projection),
           sort: object(input.sort),
           skip: input.skip,
@@ -335,7 +336,9 @@ export class DatabaseService {
     const total = await client
       .db(input.database)
       .collection(input.collection)
-      .countDocuments(object(input.filter), { maxTimeMS: input.maxTimeMS });
+      .countDocuments(object(normalizeFilter(input.filter)), {
+        maxTimeMS: input.maxTimeMS,
+      });
     return Number(total);
   }
   async captureDiagnostic(
@@ -567,7 +570,7 @@ export class DatabaseService {
       case "queries.explain":
         return encode(
           await collection!
-            .find(object(p.filter), {
+            .find(object(normalizeFilter(p.filter)), {
               projection: object(p.projection),
               sort: object(p.sort),
               maxTimeMS: p.maxTimeMS,

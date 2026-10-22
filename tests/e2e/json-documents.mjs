@@ -264,9 +264,7 @@ try {
   await expect(detailsCell.locator(".cell-preview")).toContainText(
     `ObjectId("${copyHex}")`,
   );
-  await expect(detailsCell.locator(".cell-preview")).not.toContainText(
-    "$oid",
-  );
+  await expect(detailsCell.locator(".cell-preview")).not.toContainText("$oid");
 
   await detailsCell.dblclick();
   dialog = page.getByRole("dialog", {
@@ -319,7 +317,13 @@ try {
     "PASS field conflict refresh and retry stay scoped to the edited field",
   );
 
+  // The query snapshot may be older than the document when editing begins.
+  await collection.updateOne(
+    { _id: new ObjectId(hex) },
+    { $set: { name: "latest-before-editor" } },
+  );
   dialog = await openDocument("Edit document", "Edit document");
+  expect(await content(dialog)).toContain("latest-before-editor");
   await checkFriendly(dialog);
   await enterDocument(dialog, plainDocument());
   await dialog
@@ -414,6 +418,68 @@ try {
   expect(added).toEqual(nestedDocument);
   console.log(
     "PASS Add Doc saves pasted nested JSON exactly once with retryable writes disabled",
+  );
+
+  // Full JSON editing must not treat a projected query row as the full document.
+  const projection = active().getByLabel("PROJECTION", { exact: true });
+  if (!(await projection.isVisible()))
+    await active()
+      .getByRole("button", { name: "Query options", exact: true })
+      .click();
+  await active()
+    .getByLabel("FILTER", { exact: true })
+    .fill('{cardId:"add-doc-nested-qa"}');
+  await projection.fill("{title:0,providerConfig:0}");
+  await active().getByRole("button", { name: "Run", exact: true }).click();
+  await expect(active().getByText("1 loaded", { exact: true })).toBeVisible();
+  await collection.updateOne(
+    { cardId: nestedDocument.cardId },
+    { $set: { "gridLayout.w": new Int32(1) } },
+  );
+  dialog = await openDocument("Edit document", "Edit document");
+  const complete = await content(dialog);
+  expect(complete).toContain("providerConfig:");
+  expect(complete).toContain("title:");
+  expect(complete).toContain("w: 1");
+  await enterDocument(dialog, complete.replace("w: 1", "w: 3"));
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const nestedSaved = await collection.findOne({
+    cardId: nestedDocument.cardId,
+  });
+  delete nestedSaved._id;
+  expect(nestedSaved).toEqual({
+    ...nestedDocument,
+    gridLayout: { w: 3, h: 20 },
+  });
+  console.log(
+    "PASS projected and stale query rows edit nested numbers using a fresh complete baseline",
+  );
+
+  dialog = await openDocument("Edit document", "Edit document");
+  const baseline = await content(dialog);
+  await enterDocument(dialog, baseline.replace("w: 3", "w: 4"));
+  await collection.updateOne(
+    { cardId: nestedDocument.cardId },
+    { $set: { title: "changed-while-editing" } },
+  );
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.locator(".notice.error")).toContainText("Conflict:");
+  const concurrent = await collection.findOne({
+    cardId: nestedDocument.cardId,
+  });
+  expect(concurrent.title).toBe("changed-while-editing");
+  expect(concurrent.gridLayout.w).toBe(3);
+  await dialog
+    .getByRole("button", { name: "Close", exact: true })
+    .last()
+    .click();
+  await page
+    .getByRole("dialog", { name: "Discard unsaved changes", exact: true })
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  console.log(
+    "PASS changes made after the full JSON editor opens remain protected against overwrite",
   );
 } catch (error) {
   if (app) {

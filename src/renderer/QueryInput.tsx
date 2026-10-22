@@ -1,5 +1,15 @@
-import { useId, useRef, useState, type PointerEvent } from "react";
-import { Braces, Maximize2, ListX } from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
+import { Braces, Maximize2, ListX, WandSparkles } from "lucide-react";
+import { FilterToolsDialog, type FilterTool } from "./FilterToolsDialog";
+import { objectIdConversions } from "../shared/filter-tools";
+import type { QueryInput as MongoQueryInput } from "../shared/contracts";
 import { CodeEditor } from "./Editor";
 import { shellJsonLanguage } from "./json-format";
 import {
@@ -7,6 +17,7 @@ import {
   formatQuery,
   queryKeyIntent,
   querySuggestionKeyIntent,
+  querySuggestionsAllowed,
 } from "./query-editing";
 import { Modal, useUi, message } from "./ui";
 import { resolveViewStyles } from "./appearance";
@@ -25,6 +36,8 @@ export function QueryInput({
   resizeValue,
   onResizeStart,
   onResizeStep,
+  diagnosticQuery,
+  assistantRequest,
 }: {
   value: string;
   onChange(v: string): void;
@@ -36,6 +49,8 @@ export function QueryInput({
   resizeValue?: number;
   onResizeStart?(event: PointerEvent): void;
   onResizeStep?(delta: number): void;
+  diagnosticQuery?: MongoQueryInput;
+  assistantRequest?: { tool: FilterTool; id: string };
 }) {
   const ui = useUi();
   const { t, theme, fontFamily, fontSize } = ui;
@@ -45,6 +60,17 @@ export function QueryInput({
   const [draft, setDraft] = useState<string>();
   const [error, setError] = useState("");
   const [draftError, setDraftError] = useState("");
+  const [assistant, setAssistant] = useState<FilterTool>();
+  useEffect(() => {
+    if (assistantRequest) setAssistant(assistantRequest.tool);
+  }, [assistantRequest?.id]);
+  const objectIds = useMemo(
+    () =>
+      label === "FILTER" && /[a-f\d]{24}/i.test(value)
+        ? objectIdConversions(value, context.fields)
+        : [],
+    [label, value, context.fields],
+  );
   const resizeToContent = () =>
     requestAnimationFrame(() => {
       const el = input.current;
@@ -92,7 +118,8 @@ export function QueryInput({
     )
     .slice(0, 12);
   const activeOption = Math.min(selected, Math.max(0, options.length - 1));
-  const suggestionsOpen = open && !!options.length;
+  const suggestionsOpen =
+    open && !!options.length && querySuggestionsAllowed(value, position);
   const accept = (index: number) => {
     const item = options[index];
     if (!item) return;
@@ -113,6 +140,23 @@ export function QueryInput({
       <div className="query-field-heading">
         <label htmlFor={id}>{label}</label>
         <div className="query-field-actions">
+          {label === "FILTER" && (
+            <button
+              type="button"
+              className="icon"
+              aria-label={t("Filter 助手", "Filter assistant")}
+              title={t(
+                "Filter 助手：Regex、清單、ObjectId、日期與空值",
+                "Filter assistant: Regex, lists, ObjectIds, dates and empty values",
+              )}
+              onClick={() => {
+                setOpen(false);
+                setAssistant("regex");
+              }}
+            >
+              <WandSparkles size={13} />
+            </button>
+          )}
           {onClear && (
             <button
               type="button"
@@ -145,6 +189,28 @@ export function QueryInput({
           </button>
         </div>
       </div>
+      {objectIds.length > 0 && (
+        <button
+          type="button"
+          className="filter-objectid-suggestion"
+          onClick={() => setAssistant("objectId")}
+        >
+          {t(
+            `發現 ${objectIds.length} 個 ObjectId 字串 · 檢視轉換建議`,
+            `${objectIds.length} ObjectId strings detected · Review conversion`,
+          )}
+        </button>
+      )}
+      {assistant && (
+        <FilterToolsDialog
+          value={value}
+          fields={context.fields}
+          initialTool={assistant}
+          query={diagnosticQuery}
+          apply={onChange}
+          close={() => setAssistant(undefined)}
+        />
+      )}
       <div className="query-input-wrap">
         <textarea
           ref={input}
@@ -157,6 +223,14 @@ export function QueryInput({
             "Drag the bottom-right corner to resize · Enter adds a line · Tab indents · Ctrl+Tab outdents · F5 runs",
           )}
           aria-label={label}
+          placeholder={
+            label === "FILTER"
+              ? t(
+                  "留空查詢全部 · 例：{ name: /abc/i }",
+                  "Empty matches all · e.g. { name: /abc/i }",
+                )
+              : undefined
+          }
           role="combobox"
           aria-expanded={suggestionsOpen}
           aria-controls={suggestionsOpen ? `${id}-suggestions` : undefined}
@@ -182,7 +256,7 @@ export function QueryInput({
           onKeyDown={(e) => {
             const suggestionIntent = querySuggestionKeyIntent(
               e.key,
-              open && !!options.length,
+              suggestionsOpen,
               options.length,
               selected,
             );
@@ -246,7 +320,7 @@ export function QueryInput({
             }
           }}
         />
-        {open && !!options.length && (
+        {suggestionsOpen && (
           <div
             role="listbox"
             id={`${id}-suggestions`}

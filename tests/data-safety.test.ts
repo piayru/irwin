@@ -35,6 +35,44 @@ const profile = profileSchema.parse({
   uri: "mongodb://localhost",
 });
 describe("BSON fidelity", () => {
+  test("Mongo regex literals retain patterns, escapes and flags as BSON", () => {
+    const source = String.raw`{name:/^Ada/i,path:/^a\/b\d+$/m,tags:{$in:[/admin/i,/測試/u]},note:"/plain/"}`;
+    const value = object(source);
+    expect(value.name).toBeInstanceOf(BSONRegExp);
+    expect(value.name.pattern).toBe("^Ada");
+    expect(value.name.options).toBe("i");
+    expect(value.path.pattern).toBe(String.raw`^a\/b\d+$`);
+    expect(value.path.options).toBe("m");
+    expect(value.tags.$in[1].pattern).toBe("測試");
+    expect(value.tags.$in[1].options).toBe("u");
+    expect(value.note).toBe("/plain/");
+    expect(encode(decode(encode(value)))).toBe(encode(value));
+    expect(object('{name:{$regex:"(?i)ada",$options:"s"}}').name.pattern).toBe(
+      "(?i)ada",
+    );
+  });
+  test("string regex operators never discard sibling query constraints", () => {
+    const condition = object(
+      '{name:{$regex:"^ada$",$options:"i",$nin:["Ada"]}}',
+    ).name;
+    expect(condition.$nin).toEqual(["Ada"]);
+    expect(condition.$options).toBe("i");
+    expect(condition.$regex.pattern).toBe("^ada$");
+  });
+  test("unsupported Mongo regex flags report their source position", () => {
+    expect(() => object("{\n name: /Ada/g\n}")).toThrow(
+      /line 2, column 8:.*MongoDB.*flag.*g/i,
+    );
+    expect(() => object("{name:/a/y}")).toThrow(/MongoDB.*flag.*y/i);
+    expect(() => object("{name:/unterminated}")).toThrow(/line 1/);
+    expect(() => object("{name:new RegExp(process.env.PASSWORD)}")).toThrow();
+    expect(() => object('{name:/a/.exec("a")}')).toThrow();
+  });
+  test("blank documents remain invalid for writes", () => {
+    expect(() => object("")).toThrow();
+    expect(() => object(" \n\t ")).toThrow();
+    expect(() => object("/abc/i")).toThrow(/Expected a JSON document/);
+  });
   test("Extended JSON refuses overflowing integer edits", () => {
     expect(() => decode('{"$numberLong":"9223372036854775808"}')).toThrow();
     expect(() => decode('{"$numberInt":"2147483648"}')).toThrow();
@@ -62,7 +100,10 @@ describe("BSON fidelity", () => {
     );
     const after = Date.now();
 
-    for (const value of [document.updatedAt, document.providerConfig.updatedAt]) {
+    for (const value of [
+      document.updatedAt,
+      document.providerConfig.updatedAt,
+    ]) {
       expect(value).toBeInstanceOf(Date);
       expect(value.valueOf()).toBeGreaterThanOrEqual(before);
       expect(value.valueOf()).toBeLessThanOrEqual(after);

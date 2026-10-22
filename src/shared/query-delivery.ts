@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { encode, object } from "./bson";
+import { encode, object, normalizeFilter } from "./bson";
 import {
   compileReadOnlyPipeline,
   type AggregationStageDraft,
@@ -25,7 +25,10 @@ export function validateSavedQuery(value: SavedQuery) {
   }
   for (const key of ["filter", "sort", "projection"] as const)
     try {
-      parameterizedDocument(value.query[key], value.parameters || []);
+      parameterizedDocument(
+        key === "filter" ? normalizeFilter(value.query[key]) : value.query[key],
+        value.parameters || [],
+      );
     } catch (error) {
       throw new Error(`${key.toUpperCase()}: ${(error as Error).message}`);
     }
@@ -57,7 +60,11 @@ export function resolveQueryParameters(
     throw new Error("Shell queries do not support structural parameters");
   return {
     ...query,
-    filter: parameterizedDocument(query.filter, definitions, values),
+    filter: parameterizedDocument(
+      normalizeFilter(query.filter),
+      definitions,
+      values,
+    ),
     sort: parameterizedDocument(query.sort, definitions, values),
     projection: parameterizedDocument(query.projection, definitions, values),
   };
@@ -99,7 +106,7 @@ export function driverCode(
   const data = input.stages
     ? { pipeline: compileReadOnlyPipeline(input.stages) }
     : {
-        filter: object(input.query!.filter),
+        filter: object(normalizeFilter(input.query!.filter)),
         sort: object(input.query!.sort),
         projection: object(input.query!.projection),
       };

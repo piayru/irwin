@@ -36,6 +36,7 @@ import {
   encode,
   decode,
   object,
+  normalizeFilter,
   getPath,
   setPath,
   csvValue,
@@ -530,7 +531,7 @@ export class TransferService {
     const cursor = client
       .db(p.database)
       .collection(name)
-      .find(object(p.filter), {
+      .find(object(normalizeFilter(p.filter)), {
         projection: object(p.projection),
         sort: object(p.sort),
         limit: p.limit,
@@ -754,7 +755,7 @@ export class TransferService {
     // Validate user input before reserving any output file.
     const filterDoc =
       p.direction === "export" && p.collection
-        ? object(p.filter || "{}")
+        ? object(normalizeFilter(p.filter))
         : undefined;
     if (r.profile.provider === "cosmos")
       throw new Error(

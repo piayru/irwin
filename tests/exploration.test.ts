@@ -8,6 +8,12 @@ import {
 } from "../src/shared/exploration";
 import { object } from "../src/shared/bson";
 describe("MongoDB exploration", () => {
+  it("adds a cell predicate when the existing filter is blank", () => {
+    for (const filter of ["", " \n\t "])
+      expect(object(buildCellFilter(filter, "name", "Ada", "and"))).toEqual({
+        name: { $eq: "Ada" },
+      });
+  });
   it("adds typed predicates without overwriting an existing condition", () => {
     const value = { $oid: "6a4f6bffbed892721b94b460" };
     expect(

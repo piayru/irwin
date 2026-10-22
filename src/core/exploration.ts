@@ -6,7 +6,7 @@ import { setImmediate as tick } from "node:timers/promises";
 import type { z } from "zod";
 import type { DatabaseService } from "./database";
 import { schemaInput, compareInput } from "../shared/contracts";
-import { encode, object, validPath } from "../shared/bson";
+import { encode, object, normalizeFilter, validPath } from "../shared/bson";
 import { analyzeDocuments, bsonType } from "../shared/exploration";
 
 const canonical = (value: any): string => JSON.stringify(normalize(value));
@@ -112,7 +112,7 @@ export class ExplorationService {
           : "random sample";
       const cursor =
         profile.provider === "cosmos"
-          ? collection.find(object(p.filter), {
+          ? collection.find(object(normalizeFilter(p.filter)), {
               limit: p.sampleSize,
               batchSize: 100,
               maxTimeMS: p.maxTimeMS,
@@ -120,7 +120,7 @@ export class ExplorationService {
             })
           : collection.aggregate(
               [
-                { $match: object(p.filter) },
+                { $match: object(normalizeFilter(p.filter)) },
                 { $sample: { size: p.sampleSize } },
               ],
               { batchSize: 100, maxTimeMS: p.maxTimeMS, signal },
@@ -211,7 +211,7 @@ export class ExplorationService {
               .get(target.connectionId)
               .client.db(target.database)
               .collection(target.collection)
-              .find(object(p[`${side}Filter`]), {
+              .find(object(normalizeFilter(p[`${side}Filter`])), {
                 batchSize: 100,
                 maxTimeMS: p.maxTimeMS,
                 signal,

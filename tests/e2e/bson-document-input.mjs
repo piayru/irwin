@@ -85,6 +85,8 @@ try {
             return command === "documents.insert"
               ? JSON.stringify({ acknowledged: true, insertedId: document._id })
               : row();
+          case "documents.fetch":
+            return { ejson: JSON.stringify(document) };
           case "transferPresets.list":
           case "shellDrafts.list":
           case "history.list":
