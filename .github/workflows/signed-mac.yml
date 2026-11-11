@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   package:
-    runs-on: macos-14
+    runs-on: macos-15
     # Maintainers should protect this environment with required reviewers.
     environment: macos-release
     steps:
