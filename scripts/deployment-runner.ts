@@ -69,9 +69,9 @@ async function waitFor<T>(
   while (true) {
     try {
       return await operation();
-    } catch {
+    } catch (cause) {
       if (Date.now() - started >= durationMS)
-        throw new Error("Deployment readiness timed out");
+        throw new Error("Deployment readiness timed out", { cause });
       await new Promise((ok) => setTimeout(ok, 500));
     }
   }
@@ -359,6 +359,20 @@ try {
           await probe.close();
           route.close();
         }
+      }).catch(async (error: Error) => {
+        const state = await command([
+          "inspect",
+          "--format",
+          "{{.State.Status}} (exit={{.State.ExitCode}}, oom={{.State.OOMKilled}})",
+          name,
+        ]).catch(() => "unavailable");
+        // Keep connection strings, credentials and raw Docker logs out of CI.
+        const cause = error.cause;
+        const errorType = cause instanceof Error ? cause.name : "unknown";
+        process.stdout.write(
+          `Readiness failed for ${deployment}: Docker state ${state}, probe ${errorType}\n`,
+        );
+        throw error;
       });
       reports.push(
         await verify(
