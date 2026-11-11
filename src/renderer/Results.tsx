@@ -263,10 +263,17 @@ type ResultsProps = {
   onDiagnose?: () => void;
   shellOutcome?: Pick<ShellResult, "kind" | "value" | "output">;
   rows: Row[];
+  queryGeneration?: number;
   view: string;
   theme: Settings["theme"];
   onEdit: (row: number, field: string, value: any) => void;
-  onCommit: (row: number, field: string, value: string) => Promise<void>;
+  onCommit: (
+    row: number,
+    field: string,
+    value: string,
+    snapshot?: Row,
+    generation?: number,
+  ) => Promise<void>;
   onEditError?: (error: unknown) => void;
   onSelect: (row: number) => void;
   onRowInspect?: (row: number) => void;
@@ -283,6 +290,7 @@ export function Results({
   showColumns,
   onCloseColumns,
   rows,
+  queryGeneration,
   view,
   theme,
   onEdit,
@@ -326,6 +334,8 @@ export function Results({
     field: string;
     text: string;
     original: any;
+    snapshot: Row;
+    generation?: number;
     busy?: boolean;
     error?: string;
   }>();
@@ -1071,6 +1081,8 @@ export function Results({
                               field,
                               text: value === undefined ? "null" : displayText,
                               original: value,
+                              snapshot: rows[row.index],
+                              generation: queryGeneration,
                             });
                           else if (safeColumnPath(field))
                             onEdit(row.index, safeColumnPath(field)!, value);
@@ -1110,6 +1122,8 @@ export function Results({
                                         editing.original,
                                         editing.text,
                                       ),
+                                      editing.snapshot,
+                                      editing.generation,
                                     );
                                     setEditing(undefined);
                                     scroll.current?.focus();
@@ -1237,6 +1251,8 @@ export function Results({
                   {t("檢視 JSON", "View JSON")}
                 </button>
                 <button
+                  disabled={!onRowEdit || !rows[context.row]?.editable}
+                  title={rows[context.row]?.reason}
                   onClick={() => {
                     onRowEdit?.(context.row);
                     setContext(undefined);
@@ -1245,6 +1261,7 @@ export function Results({
                   {t("編輯文件", "Edit document")}
                 </button>
                 <button
+                  disabled={!onRowCopy}
                   onClick={() => {
                     onRowCopy?.(context.row);
                     setContext(undefined);
@@ -1254,6 +1271,7 @@ export function Results({
                 </button>
                 <button
                   className="danger-text"
+                  disabled={!onRowDelete || !rows[context.row]?.editable}
                   onClick={() => {
                     onRowDelete?.(context.row);
                     setContext(undefined);

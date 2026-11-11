@@ -44,8 +44,9 @@ try {
   });
   const env = { ...process.env, WORKBENCH_USER_DATA: dataDir };
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.WORKBENCH_DEV_URL;
   app = await electron.launch({
-    args: [".", "--disable-gpu"],
+    args: [".", "--disable-gpu", `--user-data-dir=${dataDir}`],
     cwd: process.env.WORKBENCH_PROJECT_DIR || process.cwd(),
     env,
     timeout: 30000,
@@ -182,9 +183,27 @@ try {
     await page.keyboard.press("Control+a");
     await page.keyboard.press("Backspace");
     await page.keyboard.insertText(text);
-    // Monaco auto-closes the opening brace for Playwright's text input event.
-    await page.keyboard.press("Control+End");
-    await page.keyboard.press("Backspace");
+    // Monaco may indent these multiline fixtures and append an auto-closed
+    // brace. Ignore indentation only, and remove only a proven extra brace.
+    const normalize = (value) =>
+      value
+        .split("\n")
+        .map((line) => line.trimStart())
+        .join("\n")
+        .trim();
+    const entered = await content(dialog);
+    if (
+      normalize(entered) !== normalize(text) &&
+      normalize(entered.slice(0, -1)) === normalize(text) &&
+      entered.endsWith("}")
+    ) {
+      await dialog.locator(".monaco-editor").click();
+      await page.keyboard.press("Control+End");
+      await page.keyboard.press("Backspace");
+    }
+    await expect
+      .poll(async () => normalize(await content(dialog)))
+      .toBe(normalize(text));
   };
   const plainDocument = (id = hex, count = 180, score = "2") => `{
     _id: ObjectId("${id}"), name: "edited", count: ${count}, score: ${score},
@@ -338,13 +357,35 @@ try {
   );
 
   dialog = await openDocument("Edit document", "Edit document");
-  await enterDocument(dialog, plainDocument(hex, 2147483648));
+  await enterDocument(dialog, plainDocument(hex, "NumberInt(2147483648)"));
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.locator(".notice.error")).toContainText(/int32/i);
-  checkTypes(await stored());
+  const beforeTypeChanges = await stored();
+  checkTypes(beforeTypeChanges);
   await enterDocument(
     dialog,
-    plainDocument(hex, 180, '{ $numberDecimal: "4.50" }'),
+    plainDocument(hex, 180.25)
+      .replace('name: "edited"', "name: 17")
+      .replace("score: 2", "score: 2.0"),
+  );
+  const typeWarning = dialog.locator(".document-type-warning");
+  await expect(typeWarning).toContainText("count: Int32 → Double");
+  await expect(typeWarning).toContainText("name: String → Int32");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(await stored()).toEqual({
+    ...beforeTypeChanges,
+    count: new Double(180.25),
+    name: new Int32(17),
+  });
+  console.log(
+    "PASS plain edits warn about BSON type changes and save in one click",
+  );
+
+  dialog = await openDocument("Edit document", "Edit document");
+  await enterDocument(
+    dialog,
+    plainDocument(hex, "NumberInt(180)", '{ $numberDecimal: "4.50" }'),
   );
   await dialog
     .getByRole("button", { name: "Format document", exact: true })
@@ -366,7 +407,7 @@ try {
   checkTypes(await stored(), "Decimal128");
   expect((await stored()).score.toString()).toBe("4.50");
   console.log(
-    "PASS overflowing edits are blocked and explicit Extended JSON type changes survive formatting",
+    "PASS invalid explicit types are blocked and valid Extended JSON type changes survive formatting",
   );
 
   dialog = await openDocument("Copy document", "Copy document");
@@ -480,6 +521,141 @@ try {
     .click();
   console.log(
     "PASS changes made after the full JSON editor opens remain protected against overwrite",
+  );
+
+  const sourceArrayId = new ObjectId();
+  await collection.insertOne({
+    _id: sourceArrayId,
+    cardId: "source-array-qa",
+    providerConfig: {
+      flattenSources: [
+        {
+          source: "first",
+          filterWithinDays: new Int32(90),
+          fields: [{ to: "A", precision: new Int32(2) }],
+        },
+        {
+          source: "second",
+          filterWithinDays: new Int32(90),
+          fields: [{ to: "B", precision: new Int32(2) }],
+        },
+      ],
+    },
+  });
+  await projection.fill("{}");
+  await active()
+    .getByLabel("FILTER", { exact: true })
+    .fill('{cardId:"source-array-qa"}');
+  const querySources = async () => {
+    await active().getByRole("button", { name: "Run", exact: true }).click();
+    await expect(
+      active().getByRole("button", { name: "Run", exact: true }),
+    ).toBeEnabled();
+    await expect(active().getByText("1 loaded", { exact: true })).toBeVisible();
+  };
+  await querySources();
+  dialog = await openDocument("Edit document", "Edit document");
+  const sourceDocument = `{_id:ObjectId("${sourceArrayId.toHexString()}"),cardId:"source-array-qa",providerConfig:{flattenSources:[{source:"second",filterWithinDays:90,fields:[{to:"B",precision:2}]},{source:"first",filterWithinDays:180,fields:[{to:"A",precision:3}]},{source:"new",filterWithinDays:90,fields:[]}]}}`;
+  await enterDocument(dialog, sourceDocument);
+  await dialog
+    .getByRole("button", { name: "Format document", exact: true })
+    .click();
+  await expect(dialog.locator(".notice.error")).toHaveCount(0);
+  expect(await content(dialog)).not.toMatch(/\$numberInt|Int32\(/);
+  await dialog
+    .getByRole("button", { name: "Review changes", exact: true })
+    .click();
+  const sourceChanges = page.getByRole("dialog", {
+    name: "Document changes",
+    exact: true,
+  });
+  await expect(sourceChanges.locator(".document-change-list")).toContainText(
+    "flattenSources",
+  );
+  await sourceChanges
+    .getByRole("button", { name: "Keep current edit", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const sourceSaved = await collection.findOne(
+    { _id: sourceArrayId },
+    { promoteValues: false },
+  );
+  expect(
+    sourceSaved.providerConfig.flattenSources.map(
+      (source) => source.filterWithinDays._bsontype,
+    ),
+  ).toEqual(["Int32", "Int32", "Int32"]);
+  expect(
+    sourceSaved.providerConfig.flattenSources[1].fields[0].precision._bsontype,
+  ).toBe("Int32");
+  expect(
+    sourceSaved.providerConfig.flattenSources[1].fields[0].precision.valueOf(),
+  ).toBe(3);
+  console.log(
+    "PASS nested array additions, reorder and numeric edits format, preview and save with BSON types preserved",
+  );
+
+  await collection.updateOne(
+    { _id: sourceArrayId },
+    {
+      $set: {
+        "providerConfig.flattenSources": [
+          {
+            source: "first",
+            filterWithinDays: new Int32(90),
+            fields: [{ precision: new Int32(2) }],
+          },
+          {
+            source: "second",
+            filterWithinDays: new Double(90),
+            fields: [{ precision: new Int32(2) }],
+          },
+        ],
+      },
+    },
+  );
+  await querySources();
+  dialog = await openDocument("Edit document", "Edit document");
+  const combinedDocument = `{_id:ObjectId("${sourceArrayId.toHexString()}"),cardId:"source-array-qa",providerConfig:{flattenSources:[{source:"combined",filterWithinDays:120,fields:[{precision:2}]}]}}`;
+  await enterDocument(dialog, combinedDocument);
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.locator(".notice.error")).toContainText(
+    "$.providerConfig.flattenSources[0]",
+  );
+  const blockedSources = await collection.findOne(
+    { _id: sourceArrayId },
+    { promoteValues: false },
+  );
+  expect(
+    blockedSources.providerConfig.flattenSources.map(
+      (source) => source.filterWithinDays._bsontype,
+    ),
+  ).toEqual(["Int32", "Double"]);
+  console.log(
+    "PASS genuinely ambiguous array edits identify the element and leave server data unchanged",
+  );
+  await enterDocument(
+    dialog,
+    combinedDocument.replace(
+      "filterWithinDays:120",
+      'filterWithinDays:{$numberDouble:"120.0"}',
+    ),
+  );
+  await dialog
+    .getByRole("button", { name: "Format document", exact: true })
+    .click();
+  await expect(dialog.locator(".notice.error")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const explicitSource = (
+    await collection.findOne({ _id: sourceArrayId }, { promoteValues: false })
+  ).providerConfig.flattenSources[0];
+  expect(explicitSource.filterWithinDays._bsontype).toBe("Double");
+  expect(explicitSource.filterWithinDays.valueOf()).toBe(120);
+  expect(explicitSource.fields[0].precision._bsontype).toBe("Int32");
+  console.log(
+    "PASS specifying only the ambiguous field's BSON type preserves other plain JSON numbers",
   );
 } catch (error) {
   if (app) {

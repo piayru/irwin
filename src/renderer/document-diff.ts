@@ -23,6 +23,53 @@ function isDocument(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+function bsonValueType(value: unknown): string {
+  if (value === null) return "Null";
+  if (Array.isArray(value)) return "Array";
+  if (value instanceof Date) return "Date";
+  if (isDocument(value)) return "Object";
+  if (value && typeof value === "object" && "_bsontype" in value) {
+    const type = String(value._bsontype);
+    return type === "Long" ? "Int64" : type;
+  }
+  const type = typeof value;
+  return type[0].toUpperCase() + type.slice(1);
+}
+
+export function documentTypeChanges(
+  before: unknown,
+  after: unknown,
+  root = "",
+  limit = 5,
+): { path: string; before: string; after: string }[] {
+  const changes: { path: string; before: string; after: string }[] = [];
+  const visit = (oldValue: unknown, newValue: unknown, path: string) => {
+    const oldType = bsonValueType(oldValue);
+    const newType = bsonValueType(newValue);
+    if (oldType !== newType) {
+      changes.push({ path: path || "$", before: oldType, after: newType });
+    } else if (Array.isArray(oldValue) && Array.isArray(newValue)) {
+      const length = Math.min(oldValue.length, newValue.length);
+      for (let index = 0; index < length && changes.length < limit; index++) {
+        visit(oldValue[index], newValue[index], `${path || "$"}[${index}]`);
+      }
+    } else if (isDocument(oldValue) && isDocument(newValue)) {
+      for (const key of Object.keys(oldValue)) {
+        if (changes.length >= limit) break;
+        if (!Object.hasOwn(newValue, key)) continue;
+        const child = /^[A-Za-z_$][\w$]*$/.test(key)
+          ? path
+            ? `${path}.${key}`
+            : key
+          : `${path || "$"}[${JSON.stringify(key)}]`;
+        visit(oldValue[key], newValue[key], child);
+      }
+    }
+  };
+  visit(before, after, root);
+  return changes;
+}
+
 function diff(before: any, after: any, path: string, output: DocumentChange[]) {
   if (isDocument(before) && isDocument(after)) {
     for (const key of [

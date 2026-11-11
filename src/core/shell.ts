@@ -17,6 +17,7 @@ import type {
 } from "../shared/contracts";
 import { encode } from "../shared/bson";
 import { assertWritable } from "./policy";
+import { ShellResultSource } from "./shell-result-source";
 
 const writeResultTypes = new Set([
   "UpdateResult",
@@ -36,6 +37,7 @@ export class ShellService {
   private busy = false;
   private more = false;
   private profile?: Profile;
+  private resultSource?: ShellResultSource;
   async open(resolved: ResolvedConnection, database: string, nodb = false) {
     await this.close();
     this.profile = resolved.profile;
@@ -44,6 +46,30 @@ export class ShellService {
       { ...resolved.options, promoteValues: false, promoteLongs: false },
       { nodb },
     );
+    let version = "unknown";
+    if (!nodb && resolved.profile.provider === "cosmos") {
+      try {
+        const info = await provider.runCommand(
+          database,
+          { buildInfo: 1, maxTimeMS: 5000 },
+          { timeoutMS: 5000 },
+        );
+        if (typeof info.version === "string") version = info.version;
+      } catch {
+        /* Unknown provider capabilities must remain read-only. */
+      }
+    }
+    const resultSource = (this.resultSource = new ShellResultSource(
+      resolved.profile,
+      version,
+      provider.getRawClient(),
+    ));
+    const find = provider.find.bind(provider);
+    provider.find = (db, collection, filter, options, dbOptions) => {
+      const cursor = find(db, collection, filter, options, dbOptions);
+      resultSource.observe(cursor, db, collection);
+      return cursor;
+    };
     // The driver's bulk accumulator requires numeric reply counters. Keep BSON
     // document reads lossless; only bulk command replies use numeric promotion.
     const bulkWrite = provider.bulkWrite.bind(provider);
@@ -183,7 +209,9 @@ export class ShellService {
     this.output = [];
     this.more = false;
     try {
+      this.resultSource?.begin(code, this.database);
       const raw = await this.evaluate(code);
+      await this.resultSource?.verifyCollection();
       if (raw instanceof Cursor || raw instanceof AggregationCursor) {
         this.cursor = raw;
         return await this.cursorPage();
@@ -210,11 +238,7 @@ export class ShellService {
             );
             break;
           }
-          rows.push({
-            ejson,
-            editable: false,
-            reason: "Shell result is read-only",
-          });
+          rows.push(this.resultSource!.row(doc, ejson));
         }
         return this.response("documents", rows);
       }
@@ -249,12 +273,18 @@ export class ShellService {
       ) {
         kind = writeResultTypes.has(result.type) ? "write" : "documents";
         (Array.isArray(printable) ? printable : [printable]).forEach(
-          (doc: any) =>
-            rows.push({
-              ejson: encode(doc),
-              editable: false,
-              reason: "Shell result is read-only",
-            }),
+          (doc: any) => {
+            const ejson = encode(doc);
+            rows.push(
+              result.type === "Document"
+                ? this.resultSource!.row(doc, ejson)
+                : {
+                    ejson,
+                    editable: false,
+                    reason: "Shell result is read-only",
+                  },
+            );
+          },
         );
       } else if (printable !== undefined) {
         kind = "value";
@@ -287,11 +317,7 @@ export class ShellService {
       const doc = await this.cursor.next();
       const ejson = encode(doc);
       bytes += ejson.length * 2;
-      rows.push({
-        ejson,
-        editable: false,
-        reason: "Shell result is read-only; open the collection to edit",
-      });
+      rows.push(this.resultSource!.row(doc, ejson));
     }
     this.more = await this.cursor.hasNext();
     if (!this.more) {
@@ -315,6 +341,9 @@ export class ShellService {
     const runtime = this.runtime;
     this.runtime = undefined;
     this.profile = undefined;
+    this.resultSource = undefined;
+    this.cursor = undefined;
+    this.more = false;
     if (runtime) await runtime.close();
   }
 }

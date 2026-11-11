@@ -3382,6 +3382,19 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.notice.document-type-warning {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, #c38939 65%, var(--border));
+  background: color-mix(in srgb, #c38939 10%, var(--raised));
+}
+.document-type-warning svg {
+  flex: none;
+  margin-top: 2px;
+}
 .ai-assistant-layer.embedded {
   position: relative;
   inset: auto;

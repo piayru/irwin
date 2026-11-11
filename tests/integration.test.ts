@@ -244,6 +244,7 @@ test("plain JSON document edits preserve numeric BSON types and exact values on 
   await coll.insertOne({
     _id: id,
     count: new Int32(7),
+    label: "17",
     score: new Double(1),
     smallLong: Long.fromString("42"),
     largeLong: Long.fromString("9007199254740993"),
@@ -259,7 +260,7 @@ test("plain JSON document edits preserve numeric BSON types and exact values on 
     ...input,
     original,
     document:
-      '{ _id: ObjectId("507f1f77bcf86cd799439011"), count: 8, score: 2, smallLong: 43, largeLong: 9007199254740993, nested: [{ price: 1.234567890123456789012345678901234 }] }',
+      '{ _id: ObjectId("507f1f77bcf86cd799439011"), count: 8, label: "17", score: 2, smallLong: 43, largeLong: 9007199254740993, nested: [{ price: 1.234567890123456789012345678901234 }] }',
   });
   const stored = await coll.findOne(
     { _id: id },
@@ -275,22 +276,23 @@ test("plain JSON document edits preserve numeric BSON types and exact values on 
     "1.234567890123456789012345678901234",
   );
 
-  await expect(
-    database.execute("documents.replace", {
-      ...input,
-      original: result.ejson,
-      document:
-        '{ _id: ObjectId("507f1f77bcf86cd799439011"), count: 2147483648 }',
-    }),
-  ).rejects.toThrow(/int32/i);
-  const unchanged = await database.execute("documents.fetch", {
+  await database.execute("documents.replace", {
     ...input,
     original: result.ejson,
+    document:
+      '{ _id: ObjectId("507f1f77bcf86cd799439011"), count: 8.25, label: 17, score: 2, smallLong: 43, largeLong: 9007199254740993, nested: [{ price: 1.234567890123456789012345678901234 }] }',
   });
-  expect(unchanged.ejson).toBe(result.ejson);
+  const changed = await coll.findOne(
+    { _id: id },
+    { promoteValues: false, promoteLongs: false },
+  );
+  expect(changed!.count).toEqual(new Double(8.25));
+  expect(changed!.label).toEqual(new Int32(17));
+  for (const field of ["score", "smallLong", "largeLong", "nested"])
+    expect(changed![field]).toEqual(stored![field]);
 });
 
-test("plain JSON field edits preserve nested numeric BSON types and reject overflow", async () => {
+test("plain JSON field edits preserve nested numeric BSON types and widen integers when needed", async () => {
   const coll = client.db("workbench_test").collection("plain_field_edits");
   const id = new ObjectId();
   await coll.insertOne({
@@ -326,22 +328,20 @@ test("plain JSON field edits preserve nested numeric BSON types and reject overf
   expect(stored!.details.nested[0].price.toString()).toBe(
     "1.234567890123456789012345678901234",
   );
-  await expect(
-    database.execute("documents.update", {
-      ...input,
-      original: result.row.ejson,
-      field: "details.count",
-      value: "2147483648",
-    }),
-  ).rejects.toThrow(/int32/i);
-  expect(
-    (
-      await database.execute("documents.fetch", {
-        ...input,
-        original: result.row.ejson,
-      })
-    ).ejson,
-  ).toBe(result.row.ejson);
+  await database.execute("documents.update", {
+    ...input,
+    original: result.row.ejson,
+    field: "details.count",
+    value: "2147483648",
+  });
+  const widened = await coll.findOne(
+    { _id: id },
+    { promoteValues: false, promoteLongs: false },
+  );
+  expect(widened!.details).toEqual({
+    ...stored!.details,
+    count: Long.fromString("2147483648"),
+  });
 });
 
 test("structural array edits preserve BSON types through replacement and field updates", async () => {
@@ -419,6 +419,96 @@ test("ambiguous array edits never write inferred BSON types", async () => {
   });
   const stored = await coll.findOne({ _id: id }, { promoteValues: false });
   expect(stored!.items.map((item: any) => item._bsontype)).toEqual(["Double"]);
+});
+
+test("nested source-array edits preserve unambiguous BSON numbers through replacement and field saves", async () => {
+  const coll = client.db("workbench_test").collection("source_array_edits");
+  const id = new ObjectId();
+  await coll.insertOne({
+    _id: id,
+    providerConfig: {
+      flattenSources: [
+        {
+          source: "first",
+          filterWithinDays: new Int32(90),
+          fields: [{ to: "A", precision: new Int32(2) }],
+        },
+        {
+          source: "second",
+          filterWithinDays: new Int32(90),
+          fields: [{ to: "B", precision: new Int32(2) }],
+        },
+      ],
+    },
+  });
+  const input = querySchema.parse({
+    connectionId: "test",
+    database: "workbench_test",
+    collection: "source_array_edits",
+  });
+  const original = (await database.run(input)).rows[0].ejson;
+  const replaced = await database.execute("documents.replace", {
+    ...input,
+    original,
+    document: `{_id:ObjectId("${id.toHexString()}"),providerConfig:{flattenSources:[{source:"second",filterWithinDays:90,fields:[{to:"B",precision:2}]},{source:"first",filterWithinDays:180,fields:[{to:"A",precision:3}]},{source:"new",filterWithinDays:90,fields:[]}]}}`,
+  });
+  const afterReplace = await coll.findOne(
+    { _id: id },
+    { promoteValues: false },
+  );
+  expect(
+    afterReplace!.providerConfig.flattenSources.map(
+      (source: any) => source.filterWithinDays._bsontype,
+    ),
+  ).toEqual(["Int32", "Int32", "Int32"]);
+  expect(
+    afterReplace!.providerConfig.flattenSources[1].fields[0].precision
+      ._bsontype,
+  ).toBe("Int32");
+  expect(
+    afterReplace!.providerConfig.flattenSources[1].fields[0].precision.valueOf(),
+  ).toBe(3);
+  await database.execute("documents.update", {
+    ...input,
+    original: replaced.ejson,
+    field: "providerConfig.flattenSources",
+    value:
+      '[{source:"combined",filterWithinDays:120,fields:[{to:"X",precision:4}]}]',
+  });
+  const afterField = await coll.findOne({ _id: id }, { promoteValues: false });
+  expect(
+    afterField!.providerConfig.flattenSources[0].filterWithinDays._bsontype,
+  ).toBe("Int32");
+  expect(
+    afterField!.providerConfig.flattenSources[0].fields[0].precision._bsontype,
+  ).toBe("Int32");
+  expect(
+    afterField!.providerConfig.flattenSources[0].fields[0].precision.valueOf(),
+  ).toBe(4);
+  await coll.updateOne(
+    { _id: id },
+    {
+      $set: {
+        "providerConfig.flattenSources": [
+          { source: "first", filterWithinDays: new Int32(90) },
+          { source: "second", filterWithinDays: new Double(90) },
+        ],
+      },
+    },
+  );
+  const mixed = (await database.run(input)).rows[0].ejson;
+  await expect(
+    database.execute("documents.update", {
+      ...input,
+      original: mixed,
+      field: "providerConfig.flattenSources",
+      value: '[{source:"combined",filterWithinDays:120}]',
+    }),
+  ).rejects.toThrow(/array.*Extended JSON/i);
+  expect(
+    (await database.execute("documents.fetch", { ...input, original: mixed }))
+      .ejson,
+  ).toBe(mixed);
 });
 
 test("Filter assistant predicates preserve types and distinguish empty values on MongoDB", async () => {

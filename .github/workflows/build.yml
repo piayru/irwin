@@ -94,6 +94,11 @@ jobs:
         run: node tests/e2e/filter-tools.mjs
         env:
           WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
+      - name: Verify source-bound Shell document editing
+        if: runner.os == 'Windows'
+        run: node tests/e2e/shell-editing.mjs
+        env:
+          WORKBENCH_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\Irwin.exe
       - name: Verify isolated Windows install, reinstall and uninstall
         if: runner.os == 'Windows'
         env:
@@ -129,6 +134,7 @@ jobs:
             .runtime/desktop-smoke.json
             .runtime/developer-workflows.json
             .runtime/filter-tools-results.json
+            .runtime/shell-editing-results.json
             .runtime/renderer-checks.json
             .runtime/installation-*/acceptance.json
       - name: Preserve failure diagnostics

@@ -1,8 +1,8 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import type { editor } from "monaco-editor";
-import type { Profile } from "../shared/contracts";
+import type { Profile, Row } from "../shared/contracts";
 import type { WorkspaceTab } from "./CollectionTab";
-import { Copy, Braces } from "lucide-react";
+import { Copy, Braces, TriangleAlert } from "lucide-react";
 import { api, message, useUi, Modal } from "./ui";
 import { CodeEditor } from "./Editor";
 import { prettyDocument } from "./Results";
@@ -13,7 +13,7 @@ import {
   shellJsonLanguage,
 } from "./json-format";
 import { documentErrorLocation } from "./document-error";
-import { documentChanges } from "./document-diff";
+import { documentChanges, documentTypeChanges } from "./document-diff";
 import { diagnoseConnectionError } from "../shared/connection-diagnostics";
 import { resolveViewStyles } from "./appearance";
 type DocumentContext = {
@@ -21,6 +21,45 @@ type DocumentContext = {
   profile?: Profile;
   notify(text: string, error?: boolean, autoDismiss?: boolean): void;
 };
+type DocumentDraft = {
+  title: string;
+  value: string;
+  originalValue: string;
+  originalEjson?: string;
+  originalValueEjson?: string;
+  numericReferenceEjson?: string;
+  source?: Row["source"];
+  field?: string;
+  submit: (value: string, original?: string) => Promise<any>;
+  readOnly?: boolean;
+};
+
+const visibleTypeChanges = 4;
+
+function readDocumentDraft(draft: DocumentDraft) {
+  const original = draft.originalValueEjson ?? draft.originalEjson;
+  const reference = draft.numericReferenceEjson ?? original;
+  const baseline = original === undefined ? undefined : decode(original);
+  const value = decode(
+    draft.value,
+    reference === undefined || reference === original
+      ? baseline
+      : decode(reference),
+  );
+  return {
+    value,
+    changes:
+      original === undefined
+        ? []
+        : documentTypeChanges(
+            baseline,
+            value,
+            draft.field,
+            visibleTypeChanges + 1,
+          ),
+  };
+}
+
 export function useDocumentEditor({ tab, notify }: DocumentContext) {
   const ui = useUi();
   const { t } = ui;
@@ -30,17 +69,7 @@ export function useDocumentEditor({ tab, notify }: DocumentContext) {
     database: tab.database,
     collection: tab.collection,
   };
-  const [docEditor, setDocEditor] = useState<{
-    title: string;
-    value: string;
-    originalValue: string;
-    originalEjson?: string;
-    originalValueEjson?: string;
-    numericReferenceEjson?: string;
-    field?: string;
-    submit: (value: string, original?: string) => Promise<any>;
-    readOnly?: boolean;
-  }>();
+  const [docEditor, setDocEditor] = useState<DocumentDraft>();
   const [docError, setDocError] = useState("");
   const docEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const docErrorPosition = documentErrorLocation(docError);
@@ -61,7 +90,7 @@ export function useDocumentEditor({ tab, notify }: DocumentContext) {
     if (!docEditor) return;
     try {
       const result = await api.request("documents.fetch", {
-        ...target,
+        ...(docEditor.source ?? target),
         original: docEditor.originalEjson ?? docEditor.originalValue,
       });
       const fieldValue = docEditor.field
@@ -174,6 +203,37 @@ export function DocumentEditorDialogs({
     copyDocumentContent,
     requestCloseDocEditor,
   } = controller;
+  const [typePreview, setTypePreview] = useState<{
+    draft: DocumentDraft;
+    changes: ReturnType<typeof documentTypeChanges>;
+  }>();
+  useEffect(() => {
+    if (!docEditor) {
+      setTypePreview(undefined);
+      return;
+    }
+    if (docEditor.readOnly || docEditor.originalEjson === undefined) return;
+    const original = docEditor.originalValueEjson ?? docEditor.originalEjson;
+    if (
+      docEditor.value === docEditor.originalValue &&
+      (docEditor.numericReferenceEjson ?? original) === original
+    )
+      return;
+    const timer = setTimeout(() => {
+      try {
+        setTypePreview({
+          draft: docEditor,
+          changes: readDocumentDraft(docEditor).changes,
+        });
+      } catch {
+        // Save and Format report syntax or validation errors with locations.
+        setTypePreview(undefined);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [docEditor]);
+  const typeChanges =
+    typePreview && typePreview.draft === docEditor ? typePreview.changes : [];
   return (
     <>
       {" "}
@@ -187,10 +247,12 @@ export function DocumentEditorDialogs({
           footer={
             <>
               <span className="muted">
-                {t(
-                  "簡易 JSON · 保留 BSON 型別",
-                  "Simple JSON · BSON types preserved",
-                )}
+                {docEditor.readOnly || docEditor.originalEjson === undefined
+                  ? t("簡易 JSON", "Simple JSON")
+                  : t(
+                      "簡易 JSON · 型別變更會提示",
+                      "Simple JSON · Type changes are flagged",
+                    )}
               </span>
               <button
                 className="icon"
@@ -248,18 +310,20 @@ export function DocumentEditorDialogs({
                     setDocBusy(true);
                     setDocError("");
                     try {
-                      const original = docEditor.originalEjson;
-                      const reference =
-                        docEditor.numericReferenceEjson ?? original;
-                      const document = encode(
-                        decode(
-                          docEditor.value,
-                          reference === undefined
-                            ? undefined
-                            : decode(reference),
-                        ),
+                      const { value, changes } = readDocumentDraft(docEditor);
+                      await docEditor.submit(
+                        encode(value),
+                        docEditor.originalEjson,
                       );
-                      await docEditor.submit(document, original);
+                      if (changes.length)
+                        notify(
+                          t(
+                            "已儲存，BSON 型別已變更",
+                            "Saved with BSON type changes",
+                          ) +
+                            ` · ${changes[0].path}: ${changes[0].before} → ${changes[0].after}` +
+                            (changes.length > 1 ? " …" : ""),
+                        );
                       setDiscardDocEditor(false);
                       setConflictServerDocument(undefined);
                       setDocEditor(undefined);
@@ -290,8 +354,11 @@ export function DocumentEditorDialogs({
         >
           <div className="document-context">
             <span title={tab.connectionName}>{tab.connectionName}</span>
-            <strong title={`${tab.database}.${tab.collection}`}>
-              {tab.database}.{tab.collection}
+            <strong
+              title={`${docEditor.source?.database ?? tab.database}.${docEditor.source?.collection ?? tab.collection}`}
+            >
+              {docEditor.source?.database ?? tab.database}.
+              {docEditor.source?.collection ?? tab.collection}
             </strong>
             {profile && (
               <span className={`environment-badge ${profile.environment}`}>
@@ -329,6 +396,27 @@ export function DocumentEditorDialogs({
               }
             />
           </div>
+          {typeChanges.length > 0 && (
+            <div className="notice document-type-warning" role="status">
+              <TriangleAlert size={16} aria-hidden="true" />
+              <div>
+                <strong>
+                  {t("儲存後會變更 BSON 型別", "Saving will change BSON types")}
+                </strong>
+                {typeChanges.slice(0, visibleTypeChanges).map((change) => (
+                  <div key={change.path}>
+                    <code>{change.path}</code>
+                    {`: ${change.before} → ${change.after}`}
+                  </div>
+                ))}
+                {typeChanges.length > visibleTypeChanges && (
+                  <div>
+                    {t("還有其他型別變更", "Other BSON types will also change")}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {docError && (
             <div className="notice error document-error" role="alert">
               <strong>

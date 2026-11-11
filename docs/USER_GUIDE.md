@@ -110,7 +110,18 @@ let threshold = 10;
 db.orders.find({ total: { $gt: threshold } }).limit(10);
 ```
 
-Shell 執行選取內容，沒有選取時執行整份程式。支援變數、迴圈、async/await、原生 mongosh API。各分頁有各自的程序與變數。Shell 結果一律唯讀；要修改文件，請開啟 Collection 的普通查詢。
+Shell 執行選取內容，沒有選取時執行整份程式。支援變數、迴圈、async/await、原生 mongosh API。各分頁有各自的程序與變數。
+
+Shell 與 Collection 的自由命令模式中，單一、使用常值參數的 `find`／`findOne` 查詢，若能確認是目前連線的一般集合原始文件，即可在 Table 編輯欄位或右鍵「編輯文件」。例如：
+
+```js
+db.orders.find({ status: "pending" }).sort({ createdAt: -1 }).limit(100);
+db.getSiblingDB("sales").getCollection("orders").findOne({ orderNo: "A001" });
+```
+
+支援 `sort`、`skip`、`limit`、`hint`、`collation`、`batchSize`、`maxTimeMS`、`comment`、`pretty`、`allowDiskUse` 與只選取／排除欄位的 `projection`；分頁保留文件來源。編輯視窗顯示實際來源資料庫／集合，寫入與衝突重新讀取也使用該來源，不會改用分頁起始的集合。整份文件編輯前會先讀取完整版本，保留投影隱藏欄位及 BSON 型別。
+
+Aggregation、`map`、`toArray`、自行組合的物件、變數／別名、多敘述腳本、計算投影、缺少 `_id`／分區鍵、另一個 Mongo 連線及無法確認來源的結果仍唯讀。View、Time Series 或無法讀取集合類型資訊時也不開放結果編輯。這些 Shell 指令仍可執行；不符合條件時可改用 Collection 普通查詢編輯。Shell 結果不提供直接複製文件或刪除文件；可複製欄位值／檢視 JSON。連線唯讀設定與 Cosmos 版本、分區鍵限制照常適用。
 
 「停止」會取消 cursor 或終止並重建 Shell 程序，因此 Shell 變數會重設。已送出的寫入可能已經生效，取消不會回滾。
 
@@ -120,17 +131,17 @@ Shell 執行選取內容，沒有選取時執行整份程式。支援變數、�
 
 文件視窗上方會顯示連線、資料庫／集合、環境與既有文件的 `_id`。語法解析失敗時不會送出寫入，可按錯誤中的行列連結跳到編輯器標記處；原始錯誤保留在「詳細訊息」。
 
-JSON 結果、檢視／編輯文件與物件／陣列欄位編輯器使用簡易格式：ObjectId 顯示為 `ObjectId("...")`，日期顯示為 `ISODate("...")`，Int32、Int64、Double、Decimal128 顯示一般數字，不顯示 `Int32(...)` 或 `$numberInt` 等包裝。編輯既有資料時會保留原始 BSON 數字型別；大整數與 Decimal128 依原始文字解析，避免 JavaScript 數值捨入。超出原型別範圍或精度的修改會被拒絕。Extended JSON 仍可貼入，用於匯入或明確更改型別；Binary、Timestamp 等少見型別保留可還原的表示方式。
+JSON 結果與文件編輯視窗以簡易格式顯示 BSON。ObjectId 顯示為 `ObjectId("...")`，日期顯示為 `ISODate("...")`，Int32、Int64、Double、Decimal128 顯示為一般數字。編輯既有文件時，數值能以原型別保存就沿用原型別，否則會選擇能保留輸入精度的 BSON 型別。例如 Int32 的 `1` 可以直接改成 `1.25`，字串 `"17"` 可以直接改成數值 `17`。編輯器會提示變更的欄位與前後型別，按「儲存」即可寫入。Extended JSON 可用於指定型別，Binary、Timestamp 等型別也會以可還原的格式顯示。
 
 新增／編輯文件與查詢條件也接受 BSON 數字建構式的數值或字串參數：`NumberInt(-1)`／`Int32("-1")`、`NumberLong(42)`／`Long("42")`、`Double(1.25)`、`NumberDecimal(1.20)`／`Decimal128("1.20")`。這些建構式也可加 `new`，例如 `new Int32(8)`；`new ObjectId("...")` 與 `new ISODate("2025-01-01T00:00:00.000Z")` 亦可使用。數值參數直接依原文解析，保留 Int64 大整數與 Decimal128 精度；整數不可有小數部分或超出範圍。Double 若會溢位、下溢或捨入成另一個數值，會提示錯誤，可改用 Decimal128。`NaN`、`Infinity`、`-Infinity` 僅限 Double／Decimal128。仍不支援變數、運算式、任意函式或多參數數值建構式，也不會執行 JavaScript。
 
 為方便貼回其他 MongoDB 工具，超大整數與高精度小數建議使用字串參數；各數字型別的舊／新名稱對照見 [MongoDB Shell 官方說明](https://www.mongodb.com/docs/mongodb-shell/reference/compatibility/)。
 
-刪除、插入或重排陣列時，未修改元素的數字型別會隨原值保留，不會套用原位置的型別。若相同數值原本有不同 BSON 型別，或同時變更陣列結構與元素數值而無法確認對應，會拒絕儲存並提示陣列路徑；請用 Extended JSON 明確指定受影響元素的數字型別，例如 `{ "$numberDouble": "2.5" }`，再儲存。
+刪除、插入或重排陣列時，未修改元素的數字型別會隨原值保留，不會套用原位置的型別。同時修改元素內容時，若所有可能的型別參考都產生相同 BSON，仍可直接使用一般數字，不必為整個陣列加上型別標示。若可能對應的 Int32、Double、Int64 或 Decimal128 會產生不同結果，或超過安全推斷的工作量上限，則拒絕儲存並提示陣列元素路徑，例如 `$.providerConfig.flattenSources[0]`。只需將仍有歧義的數值改用 Extended JSON，例如 `{ "$numberDouble": "2.5" }`；同一元素內其他可確定型別的數字仍可保留一般寫法。
 
 - 點選 cell 後按 Ctrl+C，macOS 使用 Cmd+C。字串複製原文，ObjectId 複製為 `ObjectId("...")`；其他特殊 BSON／物件／陣列使用 Extended JSON 保留型別。
 - 雙擊 scalar cell，在原型別下修改；Enter 送出、Esc 取消，失焦不自動儲存。物件與陣列開啟 JSON 編輯器。
-- `_id`、分區鍵、含點號／特殊運算符的欄名無法直接修改。投影缺少識別鍵、計算型投影與 Shell 結果唯讀。
+- `_id`、分區鍵、含點號／特殊運算符的欄名無法直接修改。投影缺少識別鍵、計算型投影與未通過來源確認的 Shell 結果唯讀。
 - 更新包含識別鍵、原值、存在性及 BSON 型別條件；出現衝突、驗證器拒絕或未知寫入結果時會顯示錯誤。先重新查詢確認狀態，再決定是否重新編輯。
 - 「新增文件」（Add document）接受一般 JSON、上述 ObjectId／日期語法及 Extended JSON，省略 `_id` 時由 Driver 產生；Cosmos 文件必須帶入設定的分區鍵。新欄位的數字型別依輸入推斷，不會從其他文件的複製文字取得型別資訊。
 

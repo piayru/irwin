@@ -159,9 +159,108 @@ describe("JSON document formatting", () => {
     );
   });
 
-  it("refuses to guess numeric types when an array is shortened and its survivor is changed", () => {
-    expect(() => decode("[2.5]", [new Int32(1), new Double(2)])).toThrow(
+  it("allows a shortened edited array when every possible reference preserves the same BSON numeric type", () => {
+    const original = [
+      { source: "first", filterWithinDays: new Int32(90) },
+      { source: "second", filterWithinDays: new Int32(90) },
+    ];
+    expect(
+      encode(decode('[{source:"changed",filterWithinDays:180}]', original)),
+    ).toBe('[{"source":"changed","filterWithinDays":{"$numberInt":"180"}}]');
+    expect(encode(decode("[3]", [new Double(1), new Double(2)]))).toBe(
+      '[{"$numberDouble":"3.0"}]',
+    );
+    expect(
+      encode(
+        decode("[9007199254740993]", [
+          Long.fromString("1"),
+          Long.fromString("2"),
+        ]),
+      ),
+    ).toBe('[{"$numberLong":"9007199254740993"}]');
+    expect(
+      encode(
+        decode("[3.1415926535897932384626433832795]", [
+          Decimal128.fromString("1.20"),
+          Decimal128.fromString("2.30"),
+        ]),
+      ),
+    ).toBe('[{"$numberDecimal":"3.1415926535897932384626433832795"}]');
+  });
+
+  it("allows nested flattenSources edits and additions when old and inferred numeric types agree", () => {
+    const original = {
+      providerConfig: {
+        flattenSources: [
+          {
+            source: "r10",
+            filterWithinDays: new Int32(90),
+            fields: [{ to: "A", precision: new Int32(2) }],
+          },
+          {
+            source: "r7",
+            filterWithinDays: new Int32(90),
+            fields: [{ to: "B", precision: new Int32(2) }],
+          },
+        ],
+      },
+    };
+    const input =
+      '{providerConfig:{flattenSources:[{source:"r7",filterWithinDays:90,fields:[{to:"B",precision:2}]},{source:"r10",filterWithinDays:180,fields:[{to:"A",precision:3}]},{source:"new",filterWithinDays:90,fields:[{to:"C",precision:2}]}]}}';
+    const edited = decode(input, original);
+    expect(encode(edited)).toBe(
+      '{"providerConfig":{"flattenSources":[{"source":"r7","filterWithinDays":{"$numberInt":"90"},"fields":[{"to":"B","precision":{"$numberInt":"2"}}]},{"source":"r10","filterWithinDays":{"$numberInt":"180"},"fields":[{"to":"A","precision":{"$numberInt":"3"}}]},{"source":"new","filterWithinDays":{"$numberInt":"90"},"fields":[{"to":"C","precision":{"$numberInt":"2"}}]}]}}',
+    );
+    const formatted = formatEditableDocument(input, 2, encode(original));
+    expect(encode(decode(formatted.value, decode(formatted.ejson)))).toBe(
+      encode(edited),
+    );
+  });
+
+  it("requires explicit numeric types only for the ambiguous fields, not an otherwise ordinary JSON element", () => {
+    const original = [
+      { source: "first", filterWithinDays: new Int32(90), score: new Int32(1) },
+      {
+        source: "second",
+        filterWithinDays: new Int32(90),
+        score: new Double(1),
+      },
+    ];
+    expect(
+      encode(
+        decode(
+          '[{source:"combined",filterWithinDays:90,score:{$numberDouble:"2.0"}}]',
+          original,
+        ),
+      ),
+    ).toBe(
+      '[{"source":"combined","filterWithinDays":{"$numberInt":"90"},"score":{"$numberDouble":"2.0"}}]',
+    );
+  });
+
+  it("does not infer a surviving type from mixed references even when all conversions are valid", () => {
+    expect(() => decode("[3]", [new Int32(1), new Double(2)])).toThrow(
       /array.*Extended JSON/i,
+    );
+    expect(() => decode("[3.5,4]", [new Double(2)])).toThrow(
+      /array.*Extended JSON/i,
+    );
+  });
+
+  it("allows structural array edits when every possible reference widens to the same exact type", () => {
+    expect(encode(decode("[2147483648]", [new Int32(1), new Int32(2)]))).toBe(
+      '[{"$numberLong":"2147483648"}]',
+    );
+    expect(
+      encode(
+        decode("[1.000000000000000000001]", [new Double(1), new Double(2)]),
+      ),
+    ).toBe('[{"$numberDecimal":"1.000000000000000000001"}]');
+  });
+
+  it("allows a changed survivor when mixed references converge on the same BSON type", () => {
+    expect(encode(decode("[2.5]", [new Int32(1), new Double(2)]))).toBe(
+      '[{"$numberDouble":"2.5"}]',
     );
   });
 
@@ -172,20 +271,29 @@ describe("JSON document formatting", () => {
     );
   });
 
-  it("rejects edits that would overflow or lose precision in the original numeric type", () => {
+  it("switches to an exact BSON type when the original type cannot hold a plain number", () => {
     const original = decode(
       '{"count":{"$numberInt":"1"},"long":{"$numberLong":"42"},"score":{"$numberDouble":"1.0"}}',
     );
-    expect(() => decode("{ count: 2147483648 }", original)).toThrow(/int32/i);
-    expect(() => decode("{ long: 9223372036854775808 }", original)).toThrow(
-      /int64/i,
+    expect(encode(decode("{ count: 1.25 }", original))).toBe(
+      '{"count":{"$numberDouble":"1.25"}}',
     );
-    expect(() =>
-      decode("{ score: 1.000000000000000000001 }", original),
-    ).toThrow(/precision/i);
-    expect(
-      encode(decode('{ count: { $numberLong: "2147483648" } }', original)),
-    ).toBe('{"count":{"$numberLong":"2147483648"}}');
+    expect(encode(decode("{ count: 2147483648 }", original))).toBe(
+      '{"count":{"$numberLong":"2147483648"}}',
+    );
+    expect(encode(decode("{ long: 9223372036854775808 }", original))).toBe(
+      '{"long":{"$numberDecimal":"9223372036854775808"}}',
+    );
+    expect(encode(decode("{ long: 9223372036854776000 }", original))).toBe(
+      '{"long":{"$numberDecimal":"9223372036854776000"}}',
+    );
+    expect(encode(decode("{ score: 1.000000000000000000001 }", original))).toBe(
+      '{"score":{"$numberDecimal":"1.000000000000000000001"}}',
+    );
+    expect(() => decode("{ count: NumberInt(1.25) }", original)).toThrow(
+      /integer in range/i,
+    );
+    expect(() => decode("{ count: 1e7000 }", original)).toThrow();
   });
 
   it("round-trips special numeric values without constructor labels", () => {

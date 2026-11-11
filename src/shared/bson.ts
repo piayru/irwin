@@ -79,53 +79,61 @@ function integerText(text: string): string | undefined {
   return parts.sign + parts.digits + "0".repeat(parts.exponent);
 }
 
-function numericValue(value: ParsedNumber, original: any): any {
+function numericValue(
+  value: ParsedNumber,
+  original: any,
+  requireDouble = false,
+): any {
   const { text } = value;
   try {
     const type = original?._bsontype;
     if (type === "Decimal128") {
-      Decimal128.fromString(text);
-      return { $numberDecimal: text };
+      try {
+        Decimal128.fromString(text);
+        return { $numberDecimal: text };
+      } catch {
+        // Try another exact representation for a plain editor number.
+      }
     }
-    if (type === "Long") {
+    if (type === "Long" || type === "Int32") {
       const integer = integerText(text);
-      if (integer === undefined)
-        throw new Error("Invalid int64: an integer in range is required");
-      csvValue(integer, "int64");
-      return { $numberLong: integer };
-    }
-    if (type === "Int32") {
-      const integer = integerText(text);
-      if (integer === undefined)
-        throw new Error("Invalid int32: an integer in range is required");
-      csvValue(integer, "int32");
-      return { $numberInt: integer };
+      if (integer !== undefined) {
+        try {
+          csvValue(integer, type === "Long" ? "int64" : "int32");
+          return type === "Long"
+            ? { $numberLong: integer }
+            : { $numberInt: integer };
+        } catch {
+          // The value fits a different BSON type, or will fail inference below.
+        }
+      }
     }
     const number = Number(text);
     const special = ["NaN", "Infinity", "-Infinity"].includes(text);
     const exactDouble =
       special || numericIdentity(text) === numericIdentity(String(number));
-    if (type === "Double") {
-      if (!exactDouble)
-        throw new Error(
-          "This double would lose precision; use Extended JSON to explicitly change its BSON type",
-        );
-      return { $numberDouble: Object.is(number, -0) ? "-0.0" : text };
-    }
-    if (special || Object.is(number, -0))
+    if (requireDouble && !exactDouble)
+      throw new Error("This double would lose precision; use Decimal128");
+    if (
+      ((requireDouble || type === "Double") && exactDouble) ||
+      special ||
+      Object.is(number, -0)
+    )
       return { $numberDouble: Object.is(number, -0) ? "-0.0" : text };
     if (!Number.isSafeInteger(number)) {
       const integer = integerText(text);
       if (integer !== undefined) {
         const n = BigInt(integer);
         if (n >= -(1n << 63n) && n < 1n << 63n) return { $numberLong: integer };
+        return { $numberDecimal: integer };
       }
     }
     if (!exactDouble || !Number.isFinite(number)) {
       Decimal128.fromString(text);
       return { $numberDecimal: text };
     }
-    return number;
+    // Raw unsafe integer Numbers can be clamped to Long by EJSON.deserialize.
+    return Number.isSafeInteger(number) ? number : { $numberDouble: text };
   } catch (error) {
     const location = value.location;
     const where = location?.line
@@ -169,7 +177,52 @@ function hasPlainNumber(value: any): boolean {
   );
 }
 
-function arrayReferences(value: any[], original: any[], path: string): any[] {
+type NumberRestoreContext = {
+  probing: number;
+  comparisons: number;
+  visits: number;
+  comparedBytes: number;
+};
+
+// An unknown element identity is harmless when every possible reference would
+// produce identical BSON. Compare actual restoration results, not guessed IDs,
+// object positions or numeric display text. Bound this fallback so unusually
+// complex ambiguous edits cannot freeze the document editor.
+function numericReferencesAgree(
+  value: any,
+  references: any[],
+  path: string,
+  context: NumberRestoreContext,
+): boolean {
+  let expected: string | undefined;
+  for (const reference of references) {
+    if (++context.comparisons > 4096) return false;
+    context.probing++;
+    try {
+      const restored = restoreNumbers(value, reference, path, context);
+      const ejson = encode(EJSON.deserialize(restored, { relaxed: false }));
+      context.comparedBytes += ejson.length * 2;
+      if (context.comparedBytes > 32 * 1024 * 1024) return false;
+      const signature = JSON.stringify(canonicalize(JSON.parse(ejson)));
+      if (expected !== undefined && signature !== expected) return false;
+      expected = signature;
+    } catch {
+      // A failed conversion is still a possible old reference, never evidence
+      // that another reference can safely be chosen instead.
+      return false;
+    } finally {
+      context.probing--;
+    }
+  }
+  return references.length > 0;
+}
+
+function arrayReferences(
+  value: any[],
+  original: any[],
+  path: string,
+  context: NumberRestoreContext,
+): any[] {
   const canonical = original.map((item) => JSON.parse(encode(item)));
   const oldKeys = canonical.map(displayedIdentity);
   const newKeys = value.map(displayedIdentity);
@@ -232,23 +285,55 @@ function arrayReferences(value: any[], original: any[], path: string): any[] {
       hasPlainNumber(item) &&
       (ambiguous.has(index) ||
         (match === undefined && used.size < original.length))
-    )
+    ) {
+      const possible = ambiguous.has(index)
+        ? candidates.get(newKeys[index])!.indices
+        : original.map((_, i) => i).filter((i) => !used.has(i));
+      const seen = new Set<string>();
+      const references = possible
+        .filter((i) => {
+          if (seen.has(typeKeys[i])) return false;
+          seen.add(typeKeys[i]);
+          return true;
+        })
+        .map((i) => original[i]);
+      // If more elements are present, this unmatched item might also be new.
+      // Its inferred BSON types must agree with the remaining old references.
+      if (match === undefined && value.length > original.length)
+        references.push(undefined);
+      if (
+        numericReferencesAgree(item, references, `${path}[${index}]`, context)
+      )
+        return references[0];
       throw new Error(
-        `Ambiguous numeric types in array ${path}; use Extended JSON to explicitly specify the affected element's BSON types`,
+        `Ambiguous numeric types in array ${path}[${index}]; use Extended JSON to explicitly specify the affected element's BSON types`,
       );
+    }
     if (match !== undefined) return original[match];
     return structural ? undefined : original[index];
   });
 }
 
-function restoreNumbers(value: any, original: any, path = "$"): any {
+function restoreNumbers(
+  value: any,
+  original: any,
+  path = "$",
+  context: NumberRestoreContext = {
+    probing: 0,
+    comparisons: 0,
+    visits: 0,
+    comparedBytes: 0,
+  },
+): any {
+  if (context.probing && ++context.visits > 200000)
+    throw new Error("Numeric reference comparison exceeded its work limit");
   if (value instanceof ParsedNumber) return numericValue(value, original);
   if (Array.isArray(value)) {
     const references = Array.isArray(original)
-      ? arrayReferences(value, original, path)
+      ? arrayReferences(value, original, path, context)
       : [];
     return value.map((item, index) =>
-      restoreNumbers(item, references[index], `${path}[${index}]`),
+      restoreNumbers(item, references[index], `${path}[${index}]`, context),
     );
   }
   if (!value || typeof value !== "object") return value;
@@ -259,6 +344,7 @@ function restoreNumbers(value: any, original: any, path = "$"): any {
         item,
         original && Object.hasOwn(original, key) ? original[key] : undefined,
         `${path}.${key}`,
+        context,
       ),
     ]),
   );
@@ -512,7 +598,7 @@ function shellValue(node: any): any {
             throw new Error(
               "Double requires a valid numeric literal or string",
             );
-          return numericValue(new ParsedNumber(value), new Double(0));
+          return numericValue(new ParsedNumber(value), undefined, true);
         }
         if (["Decimal128", "NumberDecimal"].includes(constructor)) {
           const value = shellNumberArgument(node, constructor);

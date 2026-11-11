@@ -63,6 +63,7 @@ import {
   normalizeFilter,
 } from "../shared/bson";
 import { DocumentEditorDialogs, useDocumentEditor } from "./DocumentEditor";
+import { editableResultSource } from "./result-source";
 import type { TabState, TableLayout } from "../shared/workspace";
 import { Results, prettyDocument } from "./Results";
 import { formatDocument, shellJsonLanguage } from "./json-format";
@@ -738,6 +739,7 @@ export default function CollectionTab({
       value,
       originalValue: value,
       originalEjson: rows[row].ejson,
+      source: rows[row].source,
       readOnly: true,
       submit: async () => {},
     });
@@ -746,14 +748,8 @@ export default function CollectionTab({
     if (!ensureWritable() || busy || openingDocument.current || docEditor)
       return;
     const snapshot = rows[row];
-    const source = snapshot?.source;
-    if (
-      !snapshot?.editable ||
-      !source ||
-      source.connectionId !== tab.connectionId ||
-      source.database !== tab.database ||
-      source.collection !== tab.collection
-    ) {
+    const source = editableResultSource(snapshot, tab, shellMode);
+    if (!source) {
       notify(
         snapshot?.reason ||
           t("請重新查詢後再編輯文件", "Run the query again before editing."),
@@ -781,7 +777,9 @@ export default function CollectionTab({
         value,
         originalValue: value,
         originalEjson: current.ejson,
-        submit: (value, original) => replaceRow(row, value, original),
+        source,
+        submit: (value, original) =>
+          replaceRow(row, value, original, source, g),
         numericReferenceEjson: current.ejson,
       });
     } catch (e) {
@@ -834,18 +832,11 @@ export default function CollectionTab({
     row: number,
     document: string,
     original?: string,
+    expectedSource?: Row["source"],
+    expectedGeneration = generation.current,
   ) => {
     if (readOnly) throw new Error(readOnlyMessage);
-    const source = rows[row].source;
-    if (
-      !source ||
-      source.connectionId !== tab.connectionId ||
-      source.database !== tab.database ||
-      source.collection !== tab.collection
-    )
-      throw new Error(
-        "Result source changed. Run the query again before editing.",
-      );
+    const source = requireEditSource(row, expectedSource, expectedGeneration);
     const result = await api.request("documents.replace", {
       connectionId: source.connectionId,
       database: source.database,
@@ -853,7 +844,10 @@ export default function CollectionTab({
       original: original ?? rows[row].ejson,
       document,
     });
-    setRows((old) => old.map((item, index) => (index === row ? result : item)));
+    if (expectedGeneration === generation.current)
+      setRows((old) =>
+        old.map((item, index) => (index === row ? result : item)),
+      );
     notify(t("文件已儲存", "Document saved"));
   };
   const cancel = async () => {
@@ -885,8 +879,10 @@ export default function CollectionTab({
     }
   };
   const edit = (row: number, field: string, value: any) => {
+    if (!ensureWritable() || busy) return;
+    const source = editableResultSource(rows[row], tab, shellMode);
     if (
-      !rows[row].editable ||
+      !source ||
       field === "_id" ||
       field.startsWith("_id.") ||
       !validPath(field)
@@ -902,35 +898,49 @@ export default function CollectionTab({
     setConflictServerDocument(undefined);
     const valueEjson = JSON.stringify(value ?? null);
     const editorValue = formatDocument(valueEjson, tabWidth);
+    const g = generation.current;
     setDocEditor({
       title: `${t("編輯欄位", "Edit field")} · ${field}`,
       value: editorValue,
       originalValue: editorValue,
       originalEjson: rows[row].ejson,
+      source,
       originalValueEjson: valueEjson,
       numericReferenceEjson: valueEjson,
       field,
-      submit: (v, original) => commit(row, field, v, original),
+      submit: (v, original) => commit(row, field, v, original, source, g),
     });
+  };
+  const requireEditSource = (
+    row: number,
+    expectedSource?: Row["source"],
+    expectedGeneration = generation.current,
+  ) => {
+    const source = editableResultSource(rows[row], tab, shellMode);
+    if (
+      !source ||
+      expectedGeneration !== generation.current ||
+      (expectedSource &&
+        (source.connectionId !== expectedSource.connectionId ||
+          source.database !== expectedSource.database ||
+          source.collection !== expectedSource.collection ||
+          source.identity !== expectedSource.identity))
+    )
+      throw new Error(
+        "Result source changed. Run the query again before editing.",
+      );
+    return source;
   };
   const commit = async (
     row: number,
     field: string,
     value: string,
     original?: string,
+    expectedSource?: Row["source"],
+    expectedGeneration = generation.current,
   ) => {
     if (readOnly) throw new Error(readOnlyMessage);
-    const source = rows[row].source;
-    if (
-      !rows[row].editable ||
-      !source ||
-      source.connectionId !== tab.connectionId ||
-      source.database !== tab.database ||
-      source.collection !== tab.collection
-    )
-      throw new Error(
-        "Result source changed. Run the query again before editing.",
-      );
+    const source = requireEditSource(row, expectedSource, expectedGeneration);
     const res = await api.request("documents.update", {
       connectionId: source.connectionId,
       database: source.database,
@@ -939,11 +949,12 @@ export default function CollectionTab({
       field,
       value,
     });
-    setRows((old) =>
-      res.row
-        ? old.map((v, i) => (i === row ? res.row : v))
-        : old.filter((_, i) => i !== row),
-    );
+    if (expectedGeneration === generation.current)
+      setRows((old) =>
+        res.row
+          ? old.map((v, i) => (i === row ? res.row : v))
+          : old.filter((_, i) => i !== row),
+      );
     notify(t("已儲存", "Saved"));
   };
   const add = () => {
@@ -1490,7 +1501,12 @@ export default function CollectionTab({
               </button>
               <button
                 className="icon"
-                disabled={readOnly || selected < 0 || !rows[selected]?.editable}
+                disabled={
+                  readOnly ||
+                  shellMode ||
+                  selected < 0 ||
+                  !rows[selected]?.editable
+                }
                 aria-label={t("刪除文件", "Delete document")}
                 title={t("刪除文件", "Delete document")}
                 onClick={() => setDeleteConfirm(true)}
@@ -1533,19 +1549,33 @@ export default function CollectionTab({
               }
               shellOutcome={shellMode ? shellOutcome : undefined}
               rows={rows}
+              queryGeneration={generation.current}
               view={view}
               theme={theme}
               onEdit={edit}
-              onCommit={commit}
+              onCommit={(row, field, value, snapshot, queryGeneration) =>
+                commit(
+                  row,
+                  field,
+                  value,
+                  snapshot?.ejson,
+                  snapshot?.source,
+                  queryGeneration,
+                )
+              }
               onEditError={(error) => notify(message(error), true, true)}
               onSelect={setSelected}
               onRowInspect={inspectRow}
               onRowEdit={editRow}
-              onRowCopy={copyRow}
-              onRowDelete={(row) => {
-                setSelected(row);
-                setDeleteConfirm(true);
-              }}
+              onRowCopy={!shellMode ? copyRow : undefined}
+              onRowDelete={
+                !shellMode
+                  ? (row) => {
+                      setSelected(row);
+                      setDeleteConfirm(true);
+                    }
+                  : undefined
+              }
               onSort={
                 tab.kind === "collection" && !freeMode
                   ? (field, direction) => {

@@ -155,6 +155,14 @@ the same numeric constructors persist their BSON types in a temporary MongoDB
 instance and remain usable in queries. Parser boundary and precision cases are
 covered by `tests/bson-constructors.test.ts`.
 
+`node tests/e2e/json-documents.mjs` runs the real Electron document workflow
+against disposable MongoDB. It checks friendly JSON display, numeric precision,
+projected editing and concurrent-write conflicts. Nested source-array cases
+cover additions, reordering, numeric edits, formatting and change previews;
+the stored BSON types must remain intact. Truly ambiguous edits must leave
+server data unchanged, and explicitly typing only the affected field must allow
+the remaining plain numbers to save safely.
+
 `node tests/e2e/update-restart-confirmation.mjs` exercises the real App and
 query/Shell editors with isolated IPC. It verifies explicit connection/tab closure
 confirmation, cancellation, background-work blocking, draft-save failure retaining
@@ -291,6 +299,21 @@ notifications, duplicate events, collapsed databases, unrelated connections,
 exports, and out-of-order metadata responses from concurrent imports. No real
 database or application data is used by this browser test. The transfer
 integration suite verifies import events identify the actual target database.
+
+## Shell result editing
+
+`pnpm test tests/shell-editing.test.ts tests/result-source.test.ts` uses disposable
+MongoDB data to check find/findOne source attribution, paging, sibling databases,
+projected full-document editing, immutable BSON identity and conditional-write
+conflicts. Transformed, fabricated, aliased, foreign-connection and View results
+must not receive editable metadata. Driver namespace checks prevent a same-id
+document from being attributed to a different collection.
+
+After `pnpm build`, run `node tests/e2e/shell-editing.mjs` for real Electron
+acceptance. It uses isolated application data and MongoDB, edits same-id documents
+in distinct namespaces, checks inline/full-document conflicts and source-bound
+refresh, and checks both Free command and standalone Shell tabs. Evidence stays
+under `.runtime/`; `WORKBENCH_EXECUTABLE` can select a packaged application.
 
 ## Optional transfer benchmark
 
