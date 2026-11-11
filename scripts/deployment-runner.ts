@@ -30,21 +30,24 @@ const distro = process.env.IRWIN_WSL_DISTRO || "Ubuntu",
 const reports: any[] = [],
   containerNames: string[] = [],
   cleanupChecks: AcceptanceCheck[] = [];
-const command = async (args: string[], timeout = 120000) => {
+const command = async (
+  args: string[],
+  timeout = 120000,
+  includeStderr = false,
+) => {
   const executable = process.platform === "win32" ? "wsl.exe" : "docker";
   const argv =
     process.platform === "win32"
       ? ["-d", distro, "--", "docker", ...args]
       : args;
   try {
-    return (
-      await exec(executable, argv, {
-        encoding: "utf8",
-        timeout,
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-      })
-    ).stdout.trim();
+    const { stdout, stderr } = await exec(executable, argv, {
+      encoding: "utf8",
+      timeout,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    return (includeStderr ? stdout + stderr : stdout).trim();
   } catch {
     throw new Error(
       `Docker ${args[0]} failed; inspect the task-owned deployment before retrying`,
@@ -366,12 +369,22 @@ try {
           "{{.State.Status}} (exit={{.State.ExitCode}}, oom={{.State.OOMKilled}})",
           name,
         ]).catch(() => "unavailable");
-        // Keep connection strings, credentials and raw Docker logs out of CI.
+        // Report the error class without exposing connection strings.
         const cause = error.cause;
         const errorType = cause instanceof Error ? cause.name : "unknown";
         process.stdout.write(
           `Readiness failed for ${deployment}: Docker state ${state}, probe ${errorType}\n`,
         );
+        // This container has no authentication or seeded user data yet.
+        if (deployment === "standalone" && state.startsWith("exited")) {
+          const startup = await command(
+            ["logs", "--tail", "20", name],
+            5000,
+            true,
+          ).catch(() => "");
+          if (startup)
+            process.stdout.write(`Standalone startup log\n${startup}\n`);
+        }
         throw error;
       });
       reports.push(
