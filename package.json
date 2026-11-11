@@ -1,6 +1,6 @@
 {
   "name": "mongo-workbench",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "packageManager": "pnpm@11.1.0",
   "engines": {
@@ -49,7 +49,7 @@
     "bson": "^7.3.2",
     "csv-parse": "^7.0.2",
     "csv-stringify": "^6.8.3",
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "electron-updater": "6.8.9",
     "exceljs": "4.4.0",
     "lucide-react": "^1.43.0",
@@ -61,7 +61,7 @@
     "react-dom": "^19.2.8",
     "ssh2": "^1.17.0",
     "stream-json": "^3.7.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.6"
   },
   "build": {
     "publish": [

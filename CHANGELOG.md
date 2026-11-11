@@ -4,6 +4,8 @@ User-visible changes are recorded here for each public release. Unreleased work 
 
 ## Unreleased
 
+## 0.1.8 — 2026-11-11
+
 ### Improvements
 
 - Edit a document's field types with ordinary JSON syntax. Values that no longer fit their original numeric type use an exact BSON representation, and the editor shows type changes without requiring another confirmation.
@@ -13,6 +15,7 @@ User-visible changes are recorded here for each public release. Unreleased work 
 ### Fixes
 
 - Allow structural array edits when all possible numeric references produce identical BSON, avoiding false ambiguity errors in nested configuration arrays. Preserve mixed-type and precision protections, accept explicit types only for affected fields, and identify the ambiguous array element when clarification is still needed.
+- Update DOMPurify, Zod and mongosh's indirect proxy and OIDC dependencies to patched versions.
 
 ## 0.1.7 — 2026-10-22
 
