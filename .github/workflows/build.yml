@@ -148,7 +148,8 @@ jobs:
             .runtime/renderer-checks/*.log
   mongo-deployments:
     needs: release-ref
-    runs-on: ubuntu-24.04
+    # The 24.04 runner's kernel is in MongoDB 8.0's unsupported range.
+    runs-on: ubuntu-22.04
     env:
       # Use the exact image verified in the v0.1.7 GitHub acceptance run.
       IRWIN_TEST_MONGO_IMAGE: mongo@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
@@ -162,6 +163,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: uname -r
       - run: docker pull "$IRWIN_TEST_MONGO_IMAGE"
       - run: pnpm accept:deployments
       - uses: actions/upload-artifact@v4
